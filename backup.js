@@ -218,6 +218,7 @@ const Backup = (() => {
           const backup = JSON.stringify({ app: 'rosequill', v: 1, saved: new Date().toISOString(), project: p });
           await writeFile(dir, [name], name + '.rosequill.json', backup);
           await writeFile(dir, [name, 'Daily backups'], `${name} ${day}.rosequill.json`, backup);
+          await writeFile(dir, [name], name + '.docx', Word.projectDocx(p)); // the whole grimoire as a Word document
           // Readable copies of every page, mirroring the binder; only changed pages are rewritten.
           const seen = new Set();
           const walk = (fid, parts) => {
@@ -285,10 +286,12 @@ const Backup = (() => {
     const removed = session ? ls.get(removedKey(), {}) : {};
     const dev = st.persisted ? '<span class="ok">✓ Protected.</span> Your browser has promised not to clear it.' : '<span class="warn">Not protected yet.</span> The browser could clear it if the device runs low on space. Installing Rosequill as an app (browser menu → Install) usually fixes this.';
     let files;
-    if (!FS_OK) files = `<p class="muted">This browser can't save to a folder automatically (phones, tablets, Firefox and Safari can't). The cloud backup below covers this device. You can also download a copy any time.</p><div class="bk-act"><button class="ghost" data-bk="download">⇩ Download a backup now</button></div>`;
-    else if (st.folder === 'ok') files = `<p><span class="ok">✓ On.</span> Saving to the <b>${esc(st.folderName)}</b> folder: a full backup, a dated copy for each of the last 14 days, and every page as a .md file. Last written ${ago(st.lastFolder)}.</p>${st.folderErr ? `<p class="warn">${esc(st.folderErr)}</p>` : ''}<div class="bk-act"><button class="ghost" data-bk="folder">Choose a different folder</button><button class="ghost" data-bk="writenow">Write now</button></div>`;
+    if (!FS_OK) files = `<p class="muted">This browser can't save to a folder automatically (phones, tablets, Firefox and Safari can't). The cloud backup below covers this device, and every cloud version can be downloaded as a Word document. You can also download a copy any time.</p><div class="bk-act"><button class="ghost" data-bk="download">⇩ Download a backup now</button><button class="ghost" data-bk="word">⇩ Word document</button></div>`;
+    else if (st.folder === 'ok') files = `<p><span class="ok">✓ On.</span> Saving to the <b>${esc(st.folderName)}</b> folder: a full backup, a <b>Word document</b> of each grimoire, a dated copy for each of the last 14 days, and every page as a .md file. Last written ${ago(st.lastFolder)}.</p><p class="bk-small">If this folder is inside Google Drive, the Word document is in your Google Drive too and opens in Google Docs.</p>${st.folderErr ? `<p class="warn">${esc(st.folderErr)}</p>` : ''}<div class="bk-act"><button class="ghost" data-bk="folder">Choose a different folder</button><button class="ghost" data-bk="writenow">Write now</button></div>`;
     else if (st.folder === 'reconnect') files = `<p><span class="warn">Paused.</span> The browser needs your OK again to write to <b>${esc(st.folderName)}</b>.</p><div class="bk-act"><button class="primary" data-bk="reconnect">Allow writing to “${esc(st.folderName)}”</button><button class="ghost" data-bk="folder">Choose another folder</button></div>`;
-    else files = `<p class="muted">Pick a folder once, and Rosequill keeps copies there as you write. Choose one inside <b>OneDrive</b> (e.g. Documents) and OneDrive backs it up too.</p><div class="bk-act"><button class="primary" data-bk="folder">Choose a backup folder</button></div>`;
+    else files = `<p class="muted">Pick a folder once, and Rosequill keeps copies there as you write, including a <b>Word document</b> of each grimoire.</p>
+      <p class="muted">✦ <b>Want it in Google Docs?</b> Choose a folder inside <b>Google Drive</b> (from the free Google Drive for desktop app). The Word document then appears in your Google Drive by itself; open it there and it opens in Google Docs. A OneDrive folder works the same way for Word online.</p>
+      <div class="bk-act"><button class="primary" data-bk="folder">Choose a backup folder</button></div>`;
     let cloud;
     if (!session) {
       cloud = `<p class="muted">Keeps a private copy online with 30 days of daily versions, and brings your writing to your other devices. Only you can see it.</p>
@@ -305,8 +308,8 @@ const Backup = (() => {
         const here = local.has(r.id) && !removed[r.id];
         const v = versions[r.id];
         return `<div class="bk-row"><div class="bk-name"><b>${esc(r.name || 'Untitled')}</b><small>${fmtN(r.words || 0)} words · saved ${ago(Date.parse(r.updated_at))}${here ? '' : ' · <i>not on this device</i>'}</small></div>
-          <div class="bk-btns">${here ? '' : `<button class="mini" data-bk="bring" data-id="${esc(r.id)}">Add to this device</button>`}<button class="mini" data-bk="versions" data-id="${esc(r.id)}">${v ? 'Hide versions' : 'Versions'}</button>${here ? '' : `<button class="mini danger" data-bk="delcloud" data-id="${esc(r.id)}" data-name="${esc(r.name)}">Delete from cloud</button>`}</div>
-          ${v ? `<div class="bk-vers">${v === 'loading' ? '<p class="muted">Loading…</p>' : v.length ? v.map(x => `<div class="bk-ver"><span>${new Date(x.day + 'T12:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })} · ${fmtN(x.words || 0)} words</span><button class="mini" data-bk="restore" data-id="${esc(r.id)}" data-day="${x.day}">Restore as a copy</button></div>`).join('') : '<p class="muted">No versions yet.</p>'}</div>` : ''}</div>`;
+          <div class="bk-btns">${here ? '' : `<button class="mini" data-bk="bring" data-id="${esc(r.id)}">Add to this device</button>`}<button class="mini" data-bk="wordcloud" data-id="${esc(r.id)}" title="Download the latest cloud backup as a Word document">⇩ Word</button><button class="mini" data-bk="versions" data-id="${esc(r.id)}">${v ? 'Hide versions' : 'Versions'}</button>${here ? '' : `<button class="mini danger" data-bk="delcloud" data-id="${esc(r.id)}" data-name="${esc(r.name)}">Delete from cloud</button>`}</div>
+          ${v ? `<div class="bk-vers">${v === 'loading' ? '<p class="muted">Loading…</p>' : v.length ? v.map(x => `<div class="bk-ver"><span>${new Date(x.day + 'T12:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' })} · ${fmtN(x.words || 0)} words</span><span class="bk-btns"><button class="mini" data-bk="wordver" data-id="${esc(r.id)}" data-day="${x.day}">⇩ Word</button><button class="mini" data-bk="restore" data-id="${esc(r.id)}" data-day="${x.day}">Restore as a copy</button></span></div>`).join('') : '<p class="muted">No versions yet.</p>'}</div>` : ''}</div>`;
       }).join('');
       cloud = `<p>${lv} Signed in as <b>${esc(who())}</b>.</p>
         <div class="bk-act"><button class="ghost" data-bk="syncnow">Back up now</button><button class="ghost" data-bk="signout">Sign out</button></div>
@@ -314,7 +317,7 @@ const Backup = (() => {
     }
     const focused = document.activeElement && document.activeElement.id, uval = $('#bkUser') ? $('#bkUser').value : '', pval = $('#bkPass') ? $('#bkPass').value : '';
     box.innerHTML = `<h3>Backups</h3><p class="muted bk-lead">Rosequill saves as you type. These keep extra copies in case anything goes wrong.</p>
-      <section class="bk-sec"><h4>✦ On this device</h4><p>Saved automatically in this browser. ${dev}</p></section>
+      <section class="bk-sec"><h4>✦ On this device</h4><p>Saved automatically in this browser. ${dev}</p><div class="bk-act"><button class="ghost" data-bk="word">⇩ Word copy of “${esc(P().name)}”</button></div></section>
       <section class="bk-sec"><h4>❧ In your files</h4>${files}</section>
       <section class="bk-sec"><h4>☁ Cloud backup</h4>${cloud}</section>
       <div class="m-act"><button class="ghost" data-x>Close</button></div>`;
@@ -324,6 +327,16 @@ const Backup = (() => {
     const b = e.target.closest('[data-bk]'); if (!b) return;
     const a = b.dataset.bk, id = b.dataset.id;
     if (a === 'download') return exportBackup();
+    if (a === 'word') { download(safeName(P().name) + '.docx', Word.projectDocx(P()), Word.MIME); toast('⇩ Word document downloaded'); return; }
+    if (a === 'wordcloud' || a === 'wordver') {
+      try {
+        const q = a === 'wordver' ? `rq_versions?select=data,name&project_id=eq.${encodeURIComponent(id)}&day=eq.${b.dataset.day}` : `rq_projects?select=data,name&id=eq.${encodeURIComponent(id)}`;
+        const row = (await rest(q))[0]; const p = await unpack(row.data); p.id = id; normalizeProject(p);
+        download(safeName(row.name || p.name) + (a === 'wordver' ? ' ' + b.dataset.day : '') + '.docx', Word.projectDocx(p), Word.MIME);
+        toast('⇩ Word document downloaded');
+      } catch { toast('Could not make the Word document. Try again.'); }
+      return;
+    }
     if (a === 'folder') return chooseFolder();
     if (a === 'reconnect') return reconnect();
     if (a === 'writenow') { await writeFolder(true); toast('❧ Written to your folder'); return; }

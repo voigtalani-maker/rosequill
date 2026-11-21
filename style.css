@@ -365,6 +365,23 @@ svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-l
 .bk-ver{display:flex;justify-content:space-between;align-items:center;gap:.5rem;font-size:.84rem;padding:.2rem 0}
 @media (max-width:560px){.bk-form{grid-template-columns:1fr}}
 
+/* ---------- guided tour ---------- */
+.tour{position:fixed;inset:0;z-index:90}
+.tour-hole{position:fixed;border-radius:12px;pointer-events:none;box-shadow:0 0 0 9999px color-mix(in srgb,#1a0718 58%,transparent),0 0 0 3px var(--rose),0 0 26px 6px var(--glow);transition:left .3s ease,top .3s ease,width .3s ease,height .3s ease,opacity .2s}
+.tour-hole.none{box-shadow:0 0 0 9999px color-mix(in srgb,#1a0718 58%,transparent)}
+.tour-card{position:fixed;width:min(340px,calc(100vw - 32px));background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:1rem 1.15rem .9rem;transition:left .3s ease,top .3s ease}
+.tour-card::before{content:"✦";position:absolute;top:.7rem;right:.9rem;color:var(--gold)}
+.tour-count{font-family:var(--f-head);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.tour-card h3{font-family:var(--f-head);color:var(--rose2);font-size:1.12rem;margin:.25rem 0 .45rem;padding-right:1.2rem}
+.tour-text{font-size:.92rem;line-height:1.55;margin:0}
+.tour-dots{display:flex;gap:5px;margin:.8rem 0 .2rem;flex-wrap:wrap}
+.tour-dots i{width:7px;height:7px;border-radius:50%;background:var(--rose-soft)}
+.tour-dots i.on{background:var(--rose);width:18px;border-radius:9px}
+.tour-act{display:flex;align-items:center;gap:.4rem;margin-top:.6rem}
+.tour-skip{font-size:.8rem;color:var(--muted);text-decoration:underline}
+.tour-skip:hover{color:var(--rose2)}
+@media (prefers-reduced-motion:reduce){.tour-hole,.tour-card{transition:none}}
+
 /* ---------- focus mode ---------- */
 .focus-bar{display:none}
 body.focus .top,body.focus .binder,body.focus .side{display:none}

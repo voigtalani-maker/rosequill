@@ -170,7 +170,7 @@ const inTrash = id => rootOf(id) === 'trash';
 function isAncestor(a, b) { let it = I(b); while (it) { if (it.id === a) return true; it = it.parent ? I(it.parent) : null; } return false; }
 function itemWords(it, p = P()) { return it.type === 'doc' ? wordsIn(it.content) : it.children.reduce((s, c) => s + itemWords(p.items[c], p), 0); }
 function manuscriptWords(p = P()) { return itemWords(p.items[p.roots.manuscript], p); }
-function linksIn(text) { const out = []; const re = /\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]/g; let m; while ((m = re.exec(text))) out.push(m[1].trim()); return out; }
+function linksIn(text) { const out = []; const re = /\[\[([^\][|\n]+)(?:\|[^\][\n]*)?\]\]/g; let m; while ((m = re.exec(text))) out.push(m[1].trim()); return out; }
 // Tags are #word preceded by start/whitespace. Headings ("# Title") never match because a letter must follow
 // the #; code spans are blanked first so `#notatag` inside backticks is ignored.
 function tagsIn(text) { const out = new Set(); const re = /(^|\s)#([\p{L}][\p{L}\p{N}_-]*)/gu; const t = String(text).replace(/`[^`\n]*`/g, ' '); let m; while ((m = re.exec(t))) out.add(m[2].toLowerCase()); return [...out]; }
@@ -311,7 +311,7 @@ Wants to know where her mother went. Fears forgetting her face.
 - Find synonyms, opposites, meanings, rhymes, describing words, related words, words that sound alike, and translations.
 - Click a word to swap it into your writing. Click **›** to look that word up next.
 
-Everything saves on this device automatically. Use **Grimoire ▾ → Export backup** now and then to keep a safe copy.
+Everything saves automatically. Tap **☁** to turn on backups (including a Word copy), and replay the guided tour any time from **▾ → Take the tour**.
 
 #guide` });
   p.current = w.id;
@@ -340,6 +340,7 @@ Everything saves on this device automatically. Use **Grimoire ▾ → Export bac
   render();
   if (dirty) flush(); else setSaved('Saved ✦');
   if (typeof Backup !== 'undefined') Backup.init();
+  if (typeof Tour !== 'undefined') Tour.init(); // first launch on this device: show the guided tour
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
 
@@ -643,7 +644,7 @@ function inline(s) {
   s = String(s).replace(/\\([\\`*_[\]#~=|>!()-])/g, (m, c) => { lit.push(c); return '\u0002' + (lit.length - 1) + '\u0002'; });
   s = esc(s);
   s = s.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return '\u0003' + (codes.length - 1) + '\u0003'; });
-  s = s.replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (m, t, a) => { links.push([t.trim(), a]); return '\u0000' + (links.length - 1) + '\u0000'; });
+  s = s.replace(/\[\[([^\][|\n]+)(?:\|([^\][\n]+))?\]\]/g, (m, t, a) => { links.push([t.trim(), a]); return '\u0000' + (links.length - 1) + '\u0000'; });
   s = s
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
@@ -1210,6 +1211,7 @@ function projectMenu(x, y) {
     { label: 'Rename this grimoire…', act: async () => { const n = await ask('Rename grimoire', P().name); if (n == null) return; P().name = n.trim() || P().name; save(); renderHeader(); } },
     { label: '☁ Backups & cloud…', act: () => Backup.open() },
     { label: '📜 Compile the book…', act: compileModal },
+    { label: '✦ Take the tour', act: () => Tour.start() },
     { label: '⇩ Export backup (.json)', act: exportBackup },
     { label: '⇧ Import backup…', act: () => $('#importFile').click() }];
   if (S.order.length > 1) items.push({ sep: 1 }, { label: 'Delete this grimoire…', danger: true, act: deleteProject });
@@ -1290,7 +1292,7 @@ function compileModal() {
     <label class="chkl"><input type="checkbox" id="cpIdea" checked> Leave out pages marked “Idea”</label>
     <label class="f">Choose a format</label>
     <div class="fmt-grid">
-      <button data-fmt="doc"><b>Word</b><span>.doc, opens in Word</span></button>
+      <button data-fmt="doc"><b>Word</b><span>.docx for Word or Google Docs</span></button>
       <button data-fmt="pdf"><b>PDF / Print</b><span>save as PDF</span></button>
       <button data-fmt="html"><b>Web page</b><span>.html</span></button>
       <button data-fmt="md"><b>Markdown</b><span>.md</span></button>
@@ -1305,20 +1307,22 @@ function compileModal() {
   });
 }
 function compileMd(o) {
-  const p = P(), parts = []; let lastDoc = false;
+  const p = o.project || P(), parts = []; let lastDoc = false; // o.shift / o.docLevel set heading depths
   const f0 = p.items[o.folder], bookTitle = f0.root === 'manuscript' ? p.name : f0.title;
   const walk = (id, d) => {
     const it = p.items[id];
     if (it.type === 'folder') {
-      if (d > 0 && o.folderTitles) { parts.push('#'.repeat(Math.min(d, 3)) + ' ' + mdEsc(it.title)); lastDoc = false; }
+      if (d > 0 && o.folderTitles) { parts.push('#'.repeat(Math.min(d + (o.shift || 0), 3)) + ' ' + mdEsc(it.title)); lastDoc = false; }
       it.children.forEach(c => walk(c, d + 1)); return;
     }
     if (o.skipIdeas && it.status === 'Idea') return;
-    let body = it.content.replace(/\[\[([^\]|\n]+)\|([^\]\n]+)\]\]/g, '$2').replace(/\[\[([^\]\n]+)\]\]/g, '$1');
+    let body = it.content.replace(/\[\[([^\][|\n]+)\|([^\][\n]+)\]\]/g, '$2').replace(/\[\[([^\][\n]+)\]\]/g, '$1');
     if (o.stripTags) body = body.replace(/(^|[ \t])#[\p{L}][\p{L}\p{N}_-]*/gmu, '$1').replace(/^[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n');
     body = body.trim(); if (!body && !o.docTitles) return;
+    // With page names as headings, a page's own headings nest one level below its name.
+    if (o.docTitles) { const lvl = o.docLevel || (o.folderTitles ? 3 : 2); body = body.replace(/^(#{1,6})(?=\s)/gm, h => '#'.repeat(Math.min(6, h.length + lvl - 1))); }
     if (lastDoc && o.sep) parts.push('✦ ✦ ✦');
-    if (o.docTitles) parts.push((o.folderTitles ? '### ' : '## ') + mdEsc(it.title));
+    if (o.docTitles) parts.push('#'.repeat(o.docLevel || (o.folderTitles ? 3 : 2)) + ' ' + mdEsc(it.title));
     if (body) parts.push(body); lastDoc = true;
   };
   walk(o.folder, 0);
@@ -1348,7 +1352,7 @@ function doCompile(fmt, o) {
   if (fmt === 'md') download(name + '.md', md0, 'text/markdown');
   if (fmt === 'txt') download(name + '.txt', toPlain(md0), 'text/plain');
   if (fmt === 'html') download(name + '.html', bookHtml(c, o), 'text/html');
-  if (fmt === 'doc') download(name + '.doc', '﻿' + bookHtml(c, o, true), 'application/msword');
+  if (fmt === 'doc') download(name + '.docx', Word.build(c.title, c.author, c.md, o.titlePage), Word.MIME);
   if (fmt === 'pdf') {
     const f = document.createElement('iframe'); f.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0'; document.body.appendChild(f);
     f.contentDocument.open(); f.contentDocument.write(bookHtml(c, o)); f.contentDocument.close();
