@@ -274,7 +274,7 @@ const Maps = (() => {
     ctx.restore();
   }
   function labelFont(f) { return f.kind === 'sea' ? `italic ${f.size}px Lora, Georgia, serif` : f.kind === 'region' ? `600 ${f.size}px Cinzel, Georgia, serif` : `${f.size}px Cinzel, Georgia, serif`; }
-  function labelText(f) { return f.kind === 'region' ? f.text.toUpperCase().split('').join(' ') : f.text; }
+  function labelText(f) { const t = String(f.text == null ? '' : f.text); return f.kind === 'region' ? t.toUpperCase().split('').join(' ') : t; }
   function drawLabel(ctx, f, S, sel) {
     ctx.save(); ctx.translate(f.x, f.y); ctx.rotate((f.rot || 0) * Math.PI / 180);
     ctx.font = labelFont(f); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -351,6 +351,8 @@ const Maps = (() => {
       $('#mNew').onclick = newMapModal; return;
     }
     E.map = m; if (!E.sel || !(m.features || []).some(f => f.id === E.sel)) E.sel = null;
+    // A re-render can replace the canvas mid-gesture, so its pointer-up is never seen: start clean.
+    E.ptrs.clear(); E.drag = null; E.draft = null; E.pinch = null; E.pending = null;
     main.innerHTML = `<div class="map-wrap">
       <div class="map-top">
         <select id="mSel" aria-label="Choose a map">${maps.map(x => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
@@ -400,7 +402,14 @@ const Maps = (() => {
       { sep: 1 },
       { label: 'Sea level…', act: seaModal },
       { label: 'Rename map…', act: async () => { const n = await ask('Rename map', m.name); if (n == null) return; pushUndo(); m.name = n.trim() || m.name; changed(); renderMain(); } },
-      { label: '✦ Add more names & places', act: () => { pushUndo(); const h = terrain(m).h; m.features.push(...makePlaces(h, m.sea, m.features.filter(f => f.kind === 'river'), rng(Date.now() & 0xffffff), m.shape || 'continent').filter(f => f.type === 'pin').slice(0, 5)); changed(); toast('✦ Added five new places'); } },
+      { label: '✦ Add more names & places', act: () => {
+        const h = terrain(m).h, old = m.features.filter(f => f.type === 'pin');
+        // Only keep new places that are well clear of every place already on the map.
+        const fresh = makePlaces(h, m.sea, m.features.filter(f => f.kind === 'river'), rng(Date.now() & 0xffffff), m.shape || 'continent')
+          .filter(f => f.type === 'pin' && !old.some(o => Math.hypot(o.x - f.x, o.y - f.y) < 90)).slice(0, 5);
+        if (!fresh.length) return toast('There is no open space left for new places. Try raising more land.');
+        pushUndo(); m.features.push(...fresh); changed(); toast(`✦ Added ${fresh.length} new place${fresh.length > 1 ? 's' : ''}`);
+      } },
       { label: 'Delete this map', danger: true, act: async () => { if (!await confirmBox(`Delete the map “${esc(m.name)}”? This can't be undone, but the Backups window can restore older versions of the grimoire.`, 'Delete map', true)) return; const p = P_(); delete p.maps[m.id]; p.mapOrder = p.mapOrder.filter(x => x !== m.id); p.currentMap = p.mapOrder[0] || null; cache.delete(m.id); E.undo = []; E.redo = []; save(); renderMain(); } },
     ]);
   }
@@ -409,8 +418,8 @@ const Maps = (() => {
     openModal(`<h3>Sea level</h3><p class="muted" style="font-size:.85rem">Raise the sea to drown the lowlands, or lower it to reveal more land.</p>
       <input type="range" id="mSea" min="0.2" max="0.8" step="0.01" value="${m.sea}" style="width:100%;accent-color:var(--rose)" aria-label="Sea level">
       <div class="m-act"><button class="primary" data-x>Done</button></div>`);
-    pushUndo();
-    $('#mSea').oninput = e => { m.sea = +e.target.value; E.dirty = true; };
+    let pushed = false; // an undo step only once she actually moves the slider
+    $('#mSea').oninput = e => { if (!pushed) { pushUndo(); pushed = true; } m.sea = +e.target.value; E.dirty = true; };
     $('#mSea').onchange = () => changed();
   }
 
@@ -425,12 +434,17 @@ const Maps = (() => {
       E.raf = requestAnimationFrame(loop);
     };
     loop();
-    cv.addEventListener('pointerdown', down); cv.addEventListener('pointermove', move); cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    cv.addEventListener('pointerdown', down); cv.addEventListener('pointermove', move); cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up); cv.addEventListener('lostpointercapture', up);
     cv.addEventListener('pointerleave', () => { E.hover = null; E.dirty = true; });
     cv.addEventListener('wheel', e => { e.preventDefault(); zoomAt(local(e), Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
     cv.addEventListener('dblclick', e => { const hit = hitTest(world(local(e))); if (hit && hit.type === 'pin' && hit.link) openLink(hit.link); });
   }
-  function fit() { if (!E.cw) return; E.scale = Math.min(E.cw / W, E.ch / H) * 0.98; E.ox = (E.cw - W * E.scale) / 2; E.oy = (E.ch - H * E.scale) / 2; E.fitted = E.map.id; E.dirty = true; }
+  function fit() {
+    if (!E.cw) return;
+    E.scale = Math.min(E.cw / W, E.ch / H) * 0.98; E.ox = (E.cw - W * E.scale) / 2; E.oy = (E.ch - H * E.scale) / 2; E.fitted = E.map.id;
+    if (E.focus) { E.scale = Math.max(E.scale, 1.2); E.ox = E.cw / 2 - E.focus.x * E.scale; E.oy = E.ch / 2 - E.focus.y * E.scale; E.focus = null; }
+    E.dirty = true;
+  }
   const local = e => { const r = $('#mCv').getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
   const world = pt => ({ x: (pt.x - E.ox) / E.scale, y: (pt.y - E.oy) / E.scale });
   function zoomAt(pt, k) { const w = world(pt); E.scale = Math.max(0.15, Math.min(6, E.scale * k)); E.ox = pt.x - w.x * E.scale; E.oy = pt.y - w.y * E.scale; E.dirty = true; }
@@ -462,7 +476,7 @@ const Maps = (() => {
   function segDist(p, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], l = dx * dx + dy * dy || 1; let t = ((p.x - a[0]) * dx + (p.y - a[1]) * dy) / l; t = Math.max(0, Math.min(1, t)); return Math.hypot(p.x - (a[0] + t * dx), p.y - (a[1] + t * dy)); }
 
   function down(e) {
-    const cv = $('#mCv'); cv.setPointerCapture(e.pointerId);
+    const cv = $('#mCv'); try { cv.setPointerCapture(e.pointerId); } catch { } // capture is a nicety; never let it stop a tap
     const pt = local(e); E.ptrs.set(e.pointerId, pt);
     if (E.ptrs.size === 2) { const [a, b] = [...E.ptrs.values()]; E.pinch = Math.hypot(a.x - b.x, a.y - b.y); E.drag = null; E.draft = null; return; }
     const w = world(pt), t = E.tool;
@@ -615,7 +629,12 @@ const Maps = (() => {
 
   /* ---- used by the rest of the app ---- */
   function pinsLinkedTo(title) { const p = P_(), t = String(title).trim().toLowerCase(), out = []; for (const m of Object.values(p.maps || {})) for (const f of m.features || []) if (f.type === 'pin' && (f.link || '').trim().toLowerCase() === t) out.push({ map: m, pin: f }); return out; }
-  function showPin(mapId, pinId) { const p = P_(); p.currentMap = mapId; p.view = 'maps'; E.sel = pinId; E.undo = []; E.redo = []; save(); render$(); }
+  function showPin(mapId, pinId) {
+    const p = P_(), m = p.maps[mapId], pin = m && (m.features || []).find(f => f.id === pinId);
+    p.currentMap = mapId; p.view = 'maps'; E.sel = pinId; E.undo = []; E.redo = [];
+    E.focus = pin ? { x: pin.x, y: pin.y } : null; E.fitted = null; // centre and zoom in on the place once the stage has its size
+    save(); render$();
+  }
   function renameLinks(oldT, newT) { const p = P_(), o = String(oldT).trim().toLowerCase(); let n = 0; for (const m of Object.values(p.maps || {})) for (const f of m.features || []) if (f.type === 'pin' && (f.link || '').trim().toLowerCase() === o) { f.link = newT; n++; } return n; }
   function normalize(p) {
     p.maps = p.maps && typeof p.maps === 'object' ? p.maps : {};
@@ -623,7 +642,14 @@ const Maps = (() => {
       if (!m || typeof m !== 'object' || typeof m.heights !== 'string') { delete p.maps[k]; continue; }
       m.id = k; m.name = String(m.name || 'Map'); m.seed = +m.seed || 1; m.sea = Math.max(0.05, Math.min(0.95, +m.sea || 0.5)); if (!STYLES[m.style]) m.style = 'parchment'; if (!SHAPES[m.shape]) m.shape = 'continent';
       m.show = Object.assign({ symbols: true, grid: false, compass: true, frame: true, title: true }, m.show || {});
-      m.features = Array.isArray(m.features) ? m.features.filter(f => f && typeof f === 'object' && (f.type === 'pin' || f.type === 'label' || (f.type === 'path' && Array.isArray(f.pts)))) : [];
+      // Repair every feature so one bad entry (from an old backup or a bug) can never break drawing the map.
+      const num = (v, d) => Number.isFinite(+v) ? +v : d;
+      m.features = (Array.isArray(m.features) ? m.features : []).filter(f => f && typeof f === 'object').map(f => {
+        if (f.type === 'pin') return { id: String(f.id || fid()), type: 'pin', kind: PINS[f.kind] ? f.kind : 'town', x: num(f.x, W / 2), y: num(f.y, H / 2), name: String(f.name == null ? '' : f.name), link: String(f.link == null ? '' : f.link) };
+        if (f.type === 'label') return { id: String(f.id || fid()), type: 'label', kind: ['region', 'sea', 'place'].includes(f.kind) ? f.kind : 'place', x: num(f.x, W / 2), y: num(f.y, H / 2), text: String(f.text == null ? '' : f.text), size: Math.max(8, Math.min(80, num(f.size, 20))), rot: Math.max(-90, Math.min(90, num(f.rot, 0))) };
+        if (f.type === 'path' && Array.isArray(f.pts)) { const pts = f.pts.filter(p => Array.isArray(p) && Number.isFinite(+p[0]) && Number.isFinite(+p[1])).map(p => [+p[0], +p[1]]); return pts.length > 1 ? { id: String(f.id || fid()), type: 'path', kind: PATHS[f.kind] ? f.kind : 'road', pts } : null; }
+        return null;
+      }).filter(Boolean);
     }
     p.mapOrder = (Array.isArray(p.mapOrder) ? p.mapOrder : []).filter((id, i, a) => p.maps[id] && a.indexOf(id) === i);
     Object.keys(p.maps).forEach(id => { if (!p.mapOrder.includes(id)) p.mapOrder.push(id); });

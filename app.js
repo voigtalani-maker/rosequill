@@ -45,7 +45,9 @@ const TEMPLATES = {
 /* ================= storage ================= */
 const Store = {
   db: null,
+  mode: 'idb', // 'idb' | 'local' (this browser has no IndexedDB) | 'failed' (IndexedDB exists but would not open)
   async init() {
+    if (!window.indexedDB) { this.mode = 'local'; return; }
     try {
       this.db = await new Promise((res, rej) => {
         const r = indexedDB.open('rosequill', 1);
@@ -54,25 +56,51 @@ const Store = {
       });
       // Let another tab upgrade or delete the database instead of being blocked forever by this one.
       this.db.onversionchange = () => {
-        this.db.close();
+        this.db.close(); this.db = null; this.mode = 'failed';
         setSaved('⚠ Reload to save', true);
         toast('Rosequill changed in another tab. Reload this page before writing more.', 10000);
       };
-    } catch { this.db = null; }
+    } catch (e) {
+      // Never fall back to a different store here: the real library may be in IndexedDB, and an
+      // empty fallback would look like everything had vanished. Boot shows an error instead.
+      this.db = null; this.mode = 'failed'; this.error = e;
+    }
   },
+  // Resolves undefined when nothing is stored, and REJECTS when the read itself fails,
+  // so a failed read is never mistaken for an empty library.
   get(k) {
-    if (!this.db) { try { return Promise.resolve(JSON.parse(localStorage.getItem('rq_' + k))); } catch { return Promise.resolve(null); } }
-    return new Promise(res => { try { const q = this.db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => res(null); } catch { res(null); } });
+    if (this.mode === 'failed') return Promise.reject(this.error || new Error('storage unavailable'));
+    if (!this.db) { try { const v = localStorage.getItem('rq_' + k); return Promise.resolve(v == null ? undefined : JSON.parse(v)); } catch (e) { return Promise.reject(e); } }
+    return new Promise((res, rej) => {
+      try { const q = this.db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error || new Error('read failed')); }
+      catch (e) { rej(e); }
+    });
   },
   // Rejects on any failure (quota, aborted transaction) so the caller can warn instead of claiming "Saved".
   set(k, v) {
+    if (this.mode === 'failed') return Promise.reject(this.error || new Error('storage unavailable'));
     if (!this.db) { try { localStorage.setItem('rq_' + k, JSON.stringify(v)); return Promise.resolve(); } catch (e) { return Promise.reject(e); } }
     return new Promise((res, rej) => {
       try {
         const tx = this.db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k);
-        tx.oncomplete = () => res();
-        tx.onerror = () => rej(tx.error || new Error('write failed'));
-        tx.onabort = () => rej(tx.error || new Error('write aborted'));
+        tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error || new Error('write failed')); tx.onabort = () => rej(tx.error || new Error('write aborted'));
+      } catch (e) { rej(e); }
+    });
+  },
+  // Read, change and write in ONE transaction. IndexedDB runs read-write transactions on a store one at a
+  // time, so two tabs can never both read revision N and both write N+1. fn runs synchronously inside it.
+  update(k, fn) {
+    if (this.mode === 'failed') return Promise.reject(this.error || new Error('storage unavailable'));
+    if (!this.db) {
+      try { const raw = localStorage.getItem('rq_' + k), v = fn(raw == null ? undefined : JSON.parse(raw)); localStorage.setItem('rq_' + k, JSON.stringify(v)); return Promise.resolve(v); }
+      catch (e) { return Promise.reject(e); }
+    }
+    return new Promise((res, rej) => {
+      try {
+        const tx = this.db.transaction('kv', 'readwrite'), st = tx.objectStore('kv'); let out;
+        const q = st.get(k);
+        q.onsuccess = () => { try { out = fn(q.result); st.put(out, k); } catch (e) { try { tx.abort(); } catch { } rej(e); } };
+        tx.oncomplete = () => res(out); tx.onerror = () => rej(tx.error || new Error('write failed')); tx.onabort = () => rej(tx.error || new Error('write aborted'));
       } catch (e) { rej(e); }
     });
   },
@@ -80,8 +108,10 @@ const Store = {
 
 let S = null;          // whole app state
 let MODE = 'write';    // editor: write | read
-let saveT = 0, dirty = false, flushing = null, saveFailed = false;
+let saveT = 0, dirty = false, flushing = null, saveFailed = false, retryT = 0, retryMs = 5000;
+let baseState = null;  // a copy of S as last read or written: the common ancestor for merging tabs
 const TAB = uid();     // identifies this tab when several are open
+const snapshotBase = () => { try { baseState = structuredClone(S); } catch { baseState = JSON.parse(JSON.stringify(S)); } };
 
 /* Several tabs can be open at once. Each save bumps S.rev and tells the other tabs;
    an idle tab reloads the newer state, and a tab with unsaved edits merges before writing. */
@@ -95,62 +125,82 @@ function save() {
 async function flush() {
   clearTimeout(saveT); saveT = 0;
   while (flushing) await flushing;
-  if (!dirty) return;
+  if (!dirty || !S) return;
   flushing = writeState();
   try { await flushing; } finally { flushing = null; }
 }
 async function writeState() {
   dirty = false;
   try {
-    const stored = await Store.get('state');
-    if (stored && stored.projects && (stored.rev || 0) > (S.rev || 0) && stored.writer !== TAB) { S = mergeRemote(stored); rerenderKeepCaret(); }
-    S.rev = Math.max(S.rev || 0, (stored && stored.rev) || 0) + 1; S.writer = TAB;
-    await Store.set('state', S);
+    let merged = false;
+    await Store.update('state', stored => {
+      if (stored && stored.projects && (stored.rev || 0) > (S.rev || 0) && stored.writer !== TAB) { S = mergeRemote(stored); merged = true; }
+      S.rev = Math.max(S.rev || 0, (stored && stored.rev) || 0) + 1; S.writer = TAB;
+      return S;
+    });
+    snapshotBase();
+    if (merged) { rerenderKeepCaret(); toast('✦ Merged with changes saved in another tab'); }
     try { localStorage.removeItem('rq_pending'); } catch { }
+    clearTimeout(retryT); retryMs = 5000;
     if (saveFailed) toast('✦ Saving works again');
     saveFailed = false; setSaved(dirty ? 'Saving…' : 'Saved ✦');
     if (bc) bc.postMessage({ type: 'saved', tab: TAB, rev: S.rev });
     if (typeof Backup !== 'undefined') Backup.changed(); // folder copy + cloud backup follow a few seconds later
   } catch (e) {
-    dirty = true; saveFailed = true; setSaved('⚠ Not saved', true);
-    toast('⚠ Rosequill could not save. Your device may be full. Use the grimoire menu ▾ → Export backup to keep a copy.', 9000);
+    dirty = true; setSaved('⚠ Not saved', true);
+    if (!saveFailed) toast('⚠ Rosequill could not save. Your device may be full. Use the grimoire menu ▾ → Export backup to keep a copy. It will keep trying.', 9000);
+    saveFailed = true;
+    // Try again by itself, waiting a little longer each time (5 s, 10 s, … up to a minute).
+    clearTimeout(retryT); retryT = setTimeout(() => { if (dirty) flush(); }, retryMs); retryMs = Math.min(retryMs * 2, 60000);
   }
 }
 // The page is closing or being hidden: IndexedDB writes can't be awaited here, so keep a
 // synchronous emergency copy in localStorage that boot() picks up if the real save didn't land.
 function emergencySave() {
-  if (!dirty && !flushing && !saveT) return;
-  try { localStorage.setItem('rq_pending', JSON.stringify(S)); } catch { }
+  if (!S || (!dirty && !flushing && !saveT)) return;
+  let ok = false;
+  try { localStorage.setItem('rq_pending', JSON.stringify(S)); ok = true; } catch { }
+  if (!ok) { // too big for localStorage (maps make libraries large): keep at least the open grimoire
+    try { localStorage.setItem('rq_pending', JSON.stringify({ partial: true, rev: S.rev, writer: TAB, project: P() })); ok = true; } catch { }
+  }
+  if (!ok) { try { localStorage.removeItem('rq_pending'); } catch { } }
   flush();
 }
+/* Three-way merge: what this tab changed since its base copy wins; everything else comes from the other tab.
+   Works item by item (pages, folders, maps), so edits to different pages in two tabs both survive. */
 function mergeRemote(R) {
   normalizeState(R);
-  const p = P(), it = p && p.items[p.current], rp = p && R.projects[p.id];
-  if (p && !rp) { R.projects[p.id] = p; if (!R.order.includes(p.id)) R.order.push(p.id); }
-  else if (rp && it) {
-    const keep = { title: it.title, content: it.content, synopsis: it.synopsis, status: it.status, label: it.label, target: it.target, snapshots: it.snapshots, modified: it.modified };
-    if (rp.items[it.id]) Object.assign(rp.items[it.id], keep);
-    else {
-      const parent = rp.items[it.parent] && rp.items[it.parent].type === 'folder' ? it.parent : rp.roots.manuscript;
-      rp.items[it.id] = { ...it, parent }; if (it.type === 'folder') rp.items[it.id].children = [];
-      rp.items[parent].children.push(it.id);
-    }
-    rp.current = it.id; rp.view = p.view;
+  const B = baseState || { projects: {} }, J = x => JSON.stringify(x);
+  for (const [pid, lp] of Object.entries(S.projects)) {
+    const bp = B.projects && B.projects[pid], rp = R.projects[pid];
+    if (!rp) { if (!bp || J(lp) !== J(bp)) { R.projects[pid] = lp; if (!R.order.includes(pid)) R.order.push(pid); } continue; } // new here, or changed here after the other tab deleted it
+    for (const k of ['name', 'author', 'target', 'sessionTarget']) if (!bp || J(lp[k]) !== J(bp[k])) rp[k] = lp[k];
+    const bi = (bp && bp.items) || {};
+    for (const [id, it] of Object.entries(lp.items)) if (!bi[id] || J(it) !== J(bi[id])) rp.items[id] = it; // added or changed here
+    for (const id of Object.keys(bi)) if (!lp.items[id]) delete rp.items[id];                              // deleted here
+    const bm = (bp && bp.maps) || {}; rp.maps = rp.maps || {};
+    for (const [id, m] of Object.entries(lp.maps || {})) if (!bm[id] || J(m) !== J(bm[id])) rp.maps[id] = m;
+    for (const id of Object.keys(bm)) if (!(lp.maps || {})[id]) delete rp.maps[id];
+    // Every page must sit in its folder's list; children lists taken from either side may miss the other's additions.
+    for (const it of Object.values(rp.items)) if (it.parent && rp.items[it.parent] && rp.items[it.parent].type === 'folder' && !rp.items[it.parent].children.includes(it.id)) rp.items[it.parent].children.push(it.id);
+    for (const f of Object.values(rp.items)) if (f.type === 'folder') f.children = f.children.filter(c => rp.items[c] && rp.items[c].parent === f.id);
+    rp.current = rp.items[lp.current] ? lp.current : rp.current; rp.view = lp.view; rp.open = lp.open; rp.currentMap = lp.currentMap; rp.dayStart = lp.dayStart;
   }
-  R.current = p && R.projects[p.id] ? p.id : R.order[0];
+  for (const pid of Object.keys((B && B.projects) || {})) if (!S.projects[pid] && R.projects[pid] && J(R.projects[pid]) === J(B.projects[pid])) { delete R.projects[pid]; R.order = R.order.filter(x => x !== pid); } // deleted here
+  normalizeState(R);
+  R.current = R.projects[S.current] ? S.current : R.order[0];
   R.theme = S.theme; R.side = S.side; R.lang = S.lang; R.gOrph = S.gOrph;
-  toast('✦ Merged with changes saved in another tab');
   return R;
 }
 async function remoteChanged() {
-  if (dirty || flushing || saveT) return; // our own next save will merge instead
-  const R = await Store.get('state');
+  if (dirty || flushing || saveT || !S) return; // our own next save will merge instead
+  let R; try { R = await Store.get('state'); } catch { return; }
   if (!R || !R.projects || (R.rev || 0) <= (S.rev || 0) || dirty || flushing) return;
   normalizeState(R);
   const cur = S.current, p = P(), page = p && p.current, view = p && p.view;
   R.theme = S.theme; R.side = S.side; R.lang = S.lang; R.gOrph = S.gOrph;
   if (R.projects[cur]) { R.current = cur; const rp = R.projects[cur]; if (rp.items[page]) rp.current = page; if (view) rp.view = view; }
-  S = R; rerenderKeepCaret();
+  S = R; snapshotBase(); rerenderKeepCaret();
 }
 function rerenderKeepCaret() {
   const ed = $('#ed'), focused = ed && document.activeElement === ed, s = ed ? ed.selectionStart : 0, e = ed ? ed.selectionEnd : 0, sc = $('#edScroll'), top = sc ? sc.scrollTop : null;
@@ -326,28 +376,47 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
   const slow = setTimeout(() => { $('#main').innerHTML = '<div class="empty-main">Opening your saved work…<br>If this takes long, close other Rosequill tabs and reload this one.</div>'; }, 2500);
   await Store.init();
   clearTimeout(slow);
-  S = await Store.get('state');
+  // A failed read must never look like an empty library: stop here, write nothing, and say so.
+  let stored;
+  try { stored = await Store.get('state'); }
+  catch (e) { return bootFailed('Rosequill couldn’t open the writing saved in this browser.'); }
+  if (stored !== undefined && stored !== null && (typeof stored !== 'object' || !stored.projects || typeof stored.projects !== 'object')) return bootFailed('The writing saved in this browser looks damaged, so Rosequill hasn’t touched it.', stored);
+  S = stored || null;
   // An emergency copy written while the page was closing wins if the real save never landed.
   let pend = null; try { pend = JSON.parse(localStorage.getItem('rq_pending')); } catch { }
-  if (pend && pend.projects && Object.keys(pend.projects).length && (!S || !S.projects || (pend.rev || 0) >= (S.rev || 0))) { S = pend; dirty = true; }
-  if (!S || !S.projects || !Object.keys(S.projects).length) {
+  if (pend && !pend.partial && pend.projects && Object.keys(pend.projects).length && (!S || (pend.rev || 0) >= (S.rev || 0))) { S = pend; dirty = true; }
+  else if (pend && pend.partial && pend.project && pend.project.id && S && (pend.rev || 0) >= (S.rev || 0)) { S.projects[pend.project.id] = pend.project; if (!S.order.includes(pend.project.id)) S.order.push(pend.project.id); dirty = true; }
+  if (!S || !Object.keys(S.projects).length) { // truly nothing stored yet: a first visit
     S = { v: 1, rev: 0, projects: {}, order: [], current: null, theme: 'auto', side: 'oracle', lang: 'af', gOrph: true };
     newProject('The Thornwood Chronicles', true);
     MODE = 'read'; // show the welcome guide nicely formatted on first launch
     dirty = true;
   }
   normalizeState(S);
+  snapshotBase();
   applyTheme();
   bindGlobal();
   ensureDay();
   render();
   if (dirty) flush(); else setSaved('Saved ✦');
+  if (Store.mode === 'local') setTimeout(() => toast('This browser can’t use its main storage, so Rosequill is saving in a smaller space. Turn on ☁ backups to be safe.', 9000), 1500);
   if (typeof Backup !== 'undefined') Backup.init();
   if (typeof Timer !== 'undefined') Timer.init();
   if (typeof Tour !== 'undefined') Tour.init(); // first launch on this device: show the guided tour
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
 
+// Start-up could not read the library. Nothing is written; the writer can retry or save what is there.
+function bootFailed(msg, raw) {
+  $('#main').innerHTML = `<div class="empty-main" style="max-width:520px;margin:0 auto">
+    <h2 style="font-family:var(--f-head);color:var(--rose2);font-style:normal">Your writing is safe, but…</h2>
+    <p style="font-style:normal">${esc(msg)} Nothing has been changed or saved over.</p>
+    <p style="font-style:normal">Close other Rosequill tabs and try again. If it keeps happening, restart the browser. Your ☁ cloud backup and any backup folder still have your work.</p>
+    <div><button class="primary" id="bfRetry">Try again</button> ${raw ? '<button class="ghost" id="bfSave">⇩ Save what is stored</button>' : ''}</div></div>`;
+  $('#bfRetry').onclick = () => location.reload();
+  const sv = $('#bfSave'); if (sv) sv.onclick = () => { const b = new Blob([JSON.stringify(raw)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'rosequill-stored-' + today() + '.json'; a.click(); };
+  setSaved('⚠ Not opened', true);
+}
 function ensureDay() {
   const p = P(), d = today();
   if (p.dayStart[d] == null) {
@@ -595,7 +664,7 @@ function checkAC() {
 }
 function drawAC() {
   const box = $('#ac'); box.hidden = false;
-  box.innerHTML = AC.items.map((it, i) => `<button data-i="${i}" class="${i === AC.idx ? 'on' : ''}">${it.create ? '✦ Create <b>' + esc(it.title) + '</b>' : esc(it.title)}<span class="k">${it.create ? 'new lore' : it.root}</span></button>`).join('');
+  box.innerHTML = AC.items.map((it, i) => `<button data-i="${i}" class="${i === AC.idx ? 'on' : ''}">${it.create ? '✦ Link to <b>' + esc(it.title) + '</b>' : esc(it.title)}<span class="k">${it.create ? 'new page' : it.root}</span></button>`).join('');
 }
 function pickAC(i) {
   const ta = $('#ed'), item = AC.items[i]; if (!ta || !item) return;
@@ -603,7 +672,8 @@ function pickAC(i) {
   insertText(ta, AC.start, pos, item.title + (close ? '' : ']]'));
   const end = AC.start + item.title.length + 2; ta.setSelectionRange(end, end);
   hideAC();
-  if (item.create) { createDoc(P().roots.lore, item.title, '', null, true); toast(`✦ Created “${item.title}” in Lore`); renderBinder(); }
+  // A link to a page that doesn't exist yet is just a link: the page is made only if she opens it.
+  if (item.create) toast(`Linked to “${item.title}”. Ctrl + click it (or open it in Read mode) to create that page`, 5000);
 }
 function hideAC() { const b = $('#ac'); if (b) b.hidden = true; }
 function caretXY(ta) {

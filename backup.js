@@ -61,12 +61,27 @@ const Backup = (() => {
     ls.set(K.session, session);
   }
   let refreshing = null;
+  // Adopt a newer session another tab saved (refresh tokens are single-use, so only one tab may refresh).
+  function adoptFresh() {
+    const fresh = ls.get(K.session, null);
+    if (fresh && fresh.user && session && session.user && fresh.user.id === session.user.id && fresh.expires_at > session.expires_at) session = fresh;
+  }
+  async function refreshOnce() {
+    adoptFresh(); // inside the lock: if another tab just refreshed, use its new tokens instead
+    if (session.expires_at - Date.now() > 60000) return;
+    const used = session.refresh_token;
+    try { keep(await auth('token?grant_type=refresh_token', { refresh_token: used })); }
+    catch (e) {
+      adoptFresh(); // a tab may have won the race a moment ago: then this failure doesn't matter
+      if (session && session.refresh_token !== used && session.expires_at - Date.now() > 60000) return;
+      throw e;
+    }
+  }
   async function token() {
     if (!session) throw Object.assign(new Error('Signed out'), { status: 401 });
-    const fresh = ls.get(K.session, null); // another tab may already have refreshed it
-    if (fresh && fresh.user && session.user && fresh.user.id === session.user.id && fresh.expires_at > session.expires_at) session = fresh;
+    adoptFresh();
     if (session.expires_at - Date.now() > 60000) return session.access_token;
-    if (!refreshing) refreshing = auth('token?grant_type=refresh_token', { refresh_token: session.refresh_token }).then(keep).finally(() => { refreshing = null; });
+    if (!refreshing) refreshing = (navigator.locks ? navigator.locks.request('rq-auth', refreshOnce) : refreshOnce()).finally(() => { refreshing = null; });
     try { await refreshing; } catch (e) { if (e.status === 400 || e.status === 401) signedOut('Your sign-in expired. Sign in again to keep backing up.'); throw e; }
     return session.access_token;
   }
@@ -126,8 +141,10 @@ const Backup = (() => {
       if (!local) { addProject(proj); M[r.id] = { base: full.rev, sig: ps }; pulled++; continue; }
       const ls_ = sig(local);
       if (ls_ === ps) { M[r.id] = { base: full.rev, sig: ps }; continue; }
-      if (!m || m.sig === ls_) { replaceProject(proj); M[r.id] = { base: full.rev, sig: ps }; pulled++; continue; }
-      // Both devices changed it: keep the other device's version as its own grimoire; this one then uploads.
+      // Replace this device's copy only when it is unchanged since it last synced. With no sync record
+      // (e.g. imported from a backup file), it may hold work the cloud lacks, so keep both instead.
+      if (m && m.sig === ls_) { replaceProject(proj); M[r.id] = { base: full.rev, sig: ps }; pulled++; continue; }
+      // Both differ: keep the other version as its own grimoire; this device's version then uploads.
       const copy = { ...proj, id: uid(), name: proj.name + ' (from another device, ' + today() + ')' };
       addProject(normalizeProject(copy)); M[r.id] = { base: full.rev, sig: null }; conflicts++;
     }
@@ -211,8 +228,11 @@ const Backup = (() => {
       try {
         if ((await dir.queryPermission({ mode: 'readwrite' })) !== 'granted') { st.folder = 'reconnect'; paint(); return; }
         const F = ls.get(K.files, {}), day = today();
+        // One folder per grimoire: a second grimoire with the same name gets its id added, so files never collide.
+        const folderOf = {}, taken = new Set();
+        for (const id of S.order) { let n = safe(S.projects[id].name); if (taken.has(n.toLowerCase())) n = safe(S.projects[id].name + ' (' + id.slice(-4) + ')'); taken.add(n.toLowerCase()); folderOf[id] = n; }
         for (const id of S.order) {
-          const p = S.projects[id], s = sig(p), name = safe(p.name);
+          const p = S.projects[id], s = sig(p), name = folderOf[id];
           let f = F[id]; if (!f || f.dir !== name) f = F[id] = { dir: name, pages: {} };
           if (!force && f.sig === s) continue;
           const backup = JSON.stringify({ app: 'rosequill', v: 1, saved: new Date().toISOString(), project: p });
@@ -289,7 +309,8 @@ const Backup = (() => {
   let cloudList = null, versions = {};
   async function open() { openModal('<div id="bkModal"></div>', 'wide'); drawModal(); if (session) { refreshList(); } }
   async function refreshList() {
-    try { cloudList = await rest('rq_projects?select=id,name,words,updated_at&order=updated_at.desc'); } catch { cloudList = null; }
+    cloudList = null; if ($('#bkModal')) drawModal();
+    try { cloudList = await rest('rq_projects?select=id,name,words,updated_at&order=updated_at.desc'); } catch { cloudList = 'error'; }
     if ($('#bkModal')) drawModal();
   }
   function drawModal() {
@@ -298,7 +319,7 @@ const Backup = (() => {
     const dev = st.persisted ? '<span class="ok">✓ Protected.</span> Your browser has promised not to clear it.' : '<span class="warn">Not protected yet.</span> The browser could clear it if the device runs low on space. Installing Rosequill as an app (browser menu → Install) usually fixes this.';
     let files;
     if (!FS_OK) files = `<p class="muted">This browser can't save to a folder automatically (phones, tablets, Firefox and Safari can't). The cloud backup below covers this device, and every cloud version can be downloaded as a Word document. You can also download a copy any time.</p><div class="bk-act"><button class="ghost" data-bk="download">⇩ Download a backup now</button><button class="ghost" data-bk="word">⇩ Word document</button></div>`;
-    else if (st.folder === 'ok') files = `<p><span class="ok">✓ On.</span> Saving to the <b>${esc(st.folderName)}</b> folder: a full backup, a <b>Word document</b> of each grimoire, a dated copy for each of the last 14 days, and every page as a .md file. Last written ${ago(st.lastFolder)}.</p><p class="bk-small">If this folder is inside Google Drive, the Word document is in your Google Drive too and opens in Google Docs.</p>${st.folderErr ? `<p class="warn">${esc(st.folderErr)}</p>` : ''}<div class="bk-act"><button class="ghost" data-bk="folder">Choose a different folder</button><button class="ghost" data-bk="writenow">Write now</button></div>`;
+    else if (st.folder === 'ok') files = `<p><span class="ok">✓ On.</span> Saving to the <b>${esc(st.folderName)}</b> folder: a full backup, a <b>Word document</b> of each grimoire, a dated copy for each of the last 14 days, and every page as a .md file. Last written ${ago(st.lastFolder)}. A grimoire you delete keeps its folder here as a safety copy.</p><p class="bk-small">If this folder is inside Google Drive, the Word document is in your Google Drive too and opens in Google Docs.</p>${st.folderErr ? `<p class="warn">${esc(st.folderErr)}</p>` : ''}<div class="bk-act"><button class="ghost" data-bk="folder">Choose a different folder</button><button class="ghost" data-bk="writenow">Write now</button></div>`;
     else if (st.folder === 'reconnect') files = `<p><span class="warn">Paused.</span> The browser needs your OK again to write to <b>${esc(st.folderName)}</b>.</p><div class="bk-act"><button class="primary" data-bk="reconnect">Allow writing to “${esc(st.folderName)}”</button><button class="ghost" data-bk="folder">Choose another folder</button></div>`;
     else files = `<p class="muted">Pick a folder once, and Rosequill keeps copies there as you write, including a <b>Word document</b> of each grimoire.</p>
       <p class="muted">✦ <b>Want it in Google Docs?</b> Choose a folder inside <b>Google Drive</b> (from the free Google Drive for desktop app). The Word document then appears in your Google Drive by itself; open it there and it opens in Google Docs. A OneDrive folder works the same way for Word online.</p>
@@ -315,7 +336,7 @@ const Backup = (() => {
     } else {
       const lv = st.cloud === 'ok' ? `<span class="ok">✓ On.</span> Last backed up ${ago(st.lastCloud)}.` : st.cloud === 'syncing' ? 'Backing up…' : st.cloud === 'offline' ? '<span class="warn">Waiting for internet.</span> It backs up as soon as you are online.' : `<span class="warn">${esc(st.cloudErr || 'Needs attention.')}</span>`;
       const local = new Set(S.order);
-      const rows = (cloudList || []).map(r => {
+      const rows = (Array.isArray(cloudList) ? cloudList : []).map(r => {
         const here = local.has(r.id) && !removed[r.id];
         const v = versions[r.id];
         return `<div class="bk-row"><div class="bk-name"><b>${esc(r.name || 'Untitled')}</b><small>${fmtN(r.words || 0)} words · saved ${ago(Date.parse(r.updated_at))}${here ? '' : ' · <i>not on this device</i>'}</small></div>
@@ -324,7 +345,7 @@ const Backup = (() => {
       }).join('');
       cloud = `<p>${lv} Signed in as <b>${esc(who())}</b>.</p>
         <div class="bk-act"><button class="ghost" data-bk="syncnow">Back up now</button><button class="ghost" data-bk="signout">Sign out</button></div>
-        <label class="f">In your cloud</label>${cloudList === null ? '<p class="muted">Loading…</p>' : rows || '<p class="muted">Nothing backed up yet. It starts within a few seconds of your next change.</p>'}`;
+        <label class="f">In your cloud</label>${cloudList === null ? '<p class="muted">Loading…</p>' : cloudList === 'error' ? `<p class="warn">Couldn’t load your cloud list${navigator.onLine ? '' : ' (you seem to be offline)'}.</p><div class="bk-act"><button class="ghost" data-bk="relist">Try again</button></div>` : rows || '<p class="muted">Nothing backed up yet. It starts within a few seconds of your next change.</p>'}`;
     }
     const focused = document.activeElement && document.activeElement.id, uval = $('#bkUser') ? $('#bkUser').value : '', pval = $('#bkPass') ? $('#bkPass').value : '';
     box.innerHTML = `<h3>Backups</h3><p class="muted bk-lead">Rosequill saves as you type. These keep extra copies in case anything goes wrong.</p>
@@ -351,6 +372,7 @@ const Backup = (() => {
     if (a === 'folder') return chooseFolder();
     if (a === 'reconnect') return reconnect();
     if (a === 'writenow') { await writeFolder(true); toast('❧ Written to your folder'); return; }
+    if (a === 'relist') return refreshList();
     if (a === 'syncnow') { await syncNow(); await refreshList(); if (st.cloud === 'ok') toast('☁ Backed up'); return; }
     if (a === 'signout') { if (await confirmBox('Sign out of the cloud backup on this device? Your writing stays here, but it stops being backed up online.', 'Sign out')) { signOut(); open(); } else open(); return; }
     if (a === 'versions') {
@@ -424,5 +446,5 @@ const Backup = (() => {
     tick = setInterval(() => { if (!document.hidden && session) syncNow(); paint(); }, 5 * 60000);
     window.addEventListener('storage', e => { if (e.key === K.session) { session = ls.get(K.session, null); st.cloud = session ? 'ok' : 'off'; paint(); } });
   }
-  return { init, changed, forget, open, paint, sig, _st: st, _sync: syncNow, _write: writeFolder };
+  return { init, changed, forget, open, paint, sig, _st: st, _sync: syncNow, _write: writeFolder, _token: token, _session: v => (v === undefined ? session : (session = v)) };
 })();
