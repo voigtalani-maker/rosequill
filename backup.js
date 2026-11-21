@@ -242,13 +242,19 @@ const Backup = (() => {
           // Each map as a picture, rewritten only when the map changed.
           if (typeof Maps !== 'undefined') {
             f.maps = f.maps || {};
-            for (const m of Object.values(p.maps || {})) {
-              if (!force && f.maps[m.id] && f.maps[m.id].mod === m.modified) continue;
-              const old = f.maps[m.id]; if (old && old.file !== safe(m.name) + '.png') await removeFile(dir, [name, 'Maps'], old.file);
-              await writeFile(dir, [name, 'Maps'], safe(m.name) + '.png', await Maps.png(m, 1)); // lighter than Save picture's 2x
-              f.maps[m.id] = { mod: m.modified, file: safe(m.name) + '.png' };
+            // One picture per map; two maps whose names clash get the map id added.
+            const mapFiles = new Set(), maps = (p.mapOrder || Object.keys(p.maps || {})).map(id => (p.maps || {})[id]).filter(Boolean).map(m => {
+              let file = safe(m.name) + '.png'; if (mapFiles.has(file.toLowerCase())) file = safe(m.name + ' (' + m.id.slice(-4) + ')') + '.png';
+              mapFiles.add(file.toLowerCase()); return { m, file };
+            });
+            const dropOld = async file => { if (!mapFiles.has(file.toLowerCase())) await removeFile(dir, [name, 'Maps'], file); };
+            for (const { m, file } of maps) {
+              if (!force && f.maps[m.id] && f.maps[m.id].mod === m.modified && f.maps[m.id].file === file) continue;
+              const old = f.maps[m.id]; if (old && old.file !== file) await dropOld(old.file);
+              await writeFile(dir, [name, 'Maps'], file, await Maps.png(m, 1)); // lighter than Save picture's 2x
+              f.maps[m.id] = { mod: m.modified, file };
             }
-            for (const [mid, old] of Object.entries(f.maps)) if (!(p.maps || {})[mid]) { await removeFile(dir, [name, 'Maps'], old.file); delete f.maps[mid]; }
+            for (const [mid, old] of Object.entries(f.maps)) if (!(p.maps || {})[mid]) { await dropOld(old.file); delete f.maps[mid]; }
           }
           // Readable copies of every page, mirroring the binder; only changed pages are rewritten.
           const seen = new Set();
@@ -257,17 +263,26 @@ const Backup = (() => {
             const here = it.root ? [...parts, safe(it.title)] : parts;
             return it.children.flatMap(c => { const x = p.items[c]; if (!x) return []; return x.type === 'folder' ? walk(c, [...here, safe(x.title)]) : [{ x, parts: here }]; });
           };
-          const pages = ['manuscript', 'lore', 'research'].flatMap(k => walk(p.roots[k], ['Pages']));
-          for (const { x, parts } of pages) {
-            const path = [...parts, safe(x.title) + '.md'].join('/'); seen.add(x.id);
+          // Give every page its own file: names that only differ by stripped characters ("Who?" / "Who"),
+          // or by letter case on Windows, get the page id added. Paths are worked out before anything is written.
+          const taken = new Set();
+          const pages = ['manuscript', 'lore', 'research'].flatMap(k => walk(p.roots[k], ['Pages'])).map(({ x, parts }) => {
+            let file = safe(x.title) + '.md';
+            if (taken.has([...parts, file].join('/').toLowerCase())) file = safe(x.title + ' (' + x.id.slice(-4) + ')') + '.md';
+            const path = [...parts, file].join('/'); taken.add(path.toLowerCase());
+            return { x, parts, file, path };
+          });
+          const removeOld = async oldPath => { if (taken.has(oldPath.toLowerCase())) return; const op = oldPath.split('/'); await removeFile(dir, [name, ...op.slice(0, -1)], op[op.length - 1]); };
+          for (const { x, parts, file, path } of pages) {
+            seen.add(x.id);
             const old = f.pages[x.id];
             if (!force && old && old.path === path && old.mod === x.modified) continue;
-            if (old && old.path !== path) { const op = old.path.split('/'); await removeFile(dir, [name, ...op.slice(0, -1)], op[op.length - 1]); }
+            if (old && old.path !== path) await removeOld(old.path); // never removes a file another page now uses
             const md = `# ${x.title}\n\n${x.synopsis ? '> ' + x.synopsis.replace(/\n/g, '\n> ') + '\n\n' : ''}${x.content}\n`;
-            await writeFile(dir, [name, ...parts], safe(x.title) + '.md', md);
+            await writeFile(dir, [name, ...parts], file, md);
             f.pages[x.id] = { path, mod: x.modified };
           }
-          for (const [pid, old] of Object.entries(f.pages)) if (!seen.has(pid)) { const op = old.path.split('/'); await removeFile(dir, [name, ...op.slice(0, -1)], op[op.length - 1]); delete f.pages[pid]; }
+          for (const [pid, old] of Object.entries(f.pages)) if (!seen.has(pid)) { await removeOld(old.path); delete f.pages[pid]; }
           // Keep 14 days of dated copies.
           try {
             const dd = await (await dir.getDirectoryHandle(name)).getDirectoryHandle('Daily backups');
@@ -424,6 +439,10 @@ const Backup = (() => {
     if (session) { clearTimeout(cloudT); cloudT = setTimeout(syncNow, 15000); }
   }
   function flushSoon() { if (session) syncNow(); writeFolder(false); }
+  // A grimoire brought back (e.g. by importing a backup) must sync again, for every account used on this device.
+  function unforget(id) {
+    try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(K.removed)) { const r = ls.get(k, {}); if (r[id]) { delete r[id]; ls.set(k, r); } } } } catch { }
+  }
   function forget(id) { if (session) { const r = ls.get(removedKey(), {}); r[id] = true; ls.set(removedKey(), r); } } // a grimoire deleted here stays in the cloud as a backup, but isn't pulled back
   function nudge() {
     if (session || st.folder === 'ok') return;
@@ -446,5 +465,5 @@ const Backup = (() => {
     tick = setInterval(() => { if (!document.hidden && session) syncNow(); paint(); }, 5 * 60000);
     window.addEventListener('storage', e => { if (e.key === K.session) { session = ls.get(K.session, null); st.cloud = session ? 'ok' : 'off'; paint(); } });
   }
-  return { init, changed, forget, open, paint, sig, _st: st, _sync: syncNow, _write: writeFolder, _token: token, _session: v => (v === undefined ? session : (session = v)) };
+  return { init, changed, forget, unforget, open, paint, sig, _st: st, _sync: syncNow, _write: writeFolder, _token: token, _session: v => (v === undefined ? session : (session = v)) };
 })();

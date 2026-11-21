@@ -565,7 +565,15 @@ const Maps = (() => {
     on('mpRot', 'input', e => { once(); f.rot = +e.target.value; changed(true); });
     on('mpLink', 'change', e => { pushUndo(); f.link = e.target.value.trim(); changed(); drawProps(); });
     on('mpOpen', 'click', () => openLink(f.link));
-    on('mpMake', 'click', () => { pushUndo(); f.link = f.name; changed(); const kindWord = { city: 'Place', town: 'Place', castle: 'Place', tower: 'Place', ruin: 'Place', cave: 'Place', temple: 'Place', port: 'Place', star: 'Place' }[f.kind]; if (!findByTitle(f.name)) createDoc(P_().roots.lore, f.name, TEMPLATES[kindWord] || '', null, true); renderBinder(); toast(`✦ “${f.name}” now has its own Lore page`); drawProps(); });
+    on('mpMake', 'click', () => {
+      pushUndo();
+      // Link to the page that actually exists afterwards: a new page may get " 2" added if a page with
+      // this name sits in the Trash, so the link must use the created page's real title.
+      const existing = findByTitle(f.name);
+      const page = existing || createDoc(P_().roots.lore, f.name, TEMPLATES.Place || '', null, true);
+      f.link = page.title; changed(); renderBinder();
+      toast(existing ? `✦ Linked to “${page.title}”` : `✦ “${page.title}” now has its own Lore page`); drawProps();
+    });
     on('mpDice', 'click', () => { pushUndo(); const r = rng(Date.now() & 0xffffff); if (f.type === 'pin') f.name = placeName(r); else f.text = f.kind === 'sea' ? seaName(r) : f.kind === 'region' ? regionName(r) : placeName(r); changed(); drawProps(); });
     on('mpDel', 'click', () => { pushUndo(); E.map.features = E.map.features.filter(x => x !== f); E.sel = null; changed(); drawProps(); });
     if (focus) { const i = $('#mpName') || $('#mpText'); if (i) { i.focus(); i.select(); } }

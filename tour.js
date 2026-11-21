@@ -106,7 +106,8 @@ const Tour = (() => {
     if (root) return;
     hideMenu(); if (!$('#modal').hidden) closeModal();
     document.body.classList.remove('focus');
-    before = { side: S.side };
+    // Remember exactly where she was, so finishing or skipping puts everything back.
+    const p = P(); before = { side: S.side, view: p.view, current: p.current, mode: MODE, back: document.activeElement };
     steps = STEPS;
     root = document.createElement('div');
     root.className = 'tour'; root.id = 'tour';
@@ -123,23 +124,50 @@ const Tour = (() => {
     });
     document.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', place);
+    track();
     show(0);
+  }
+  // Follow the highlighted part if it moves (a drawer sliding, the page reflowing), not only on resize.
+  let trackRaf = 0, lastRect = '';
+  function track() {
+    cancelAnimationFrame(trackRaf);
+    const loop = () => {
+      if (!root) return;
+      const s = steps[i], el = s && s.el ? $(s.el) : null, r = el ? el.getBoundingClientRect() : null;
+      const key = r ? [r.left, r.top, r.width, r.height].map(Math.round).join(',') : 'none';
+      if (key !== lastRect) { lastRect = key; place(); }
+      trackRaf = requestAnimationFrame(loop);
+    };
+    loop();
   }
   function onKey(e) {
     if (!root) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end(); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); if (i < steps.length - 1) show(i + 1); else end(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); if (i > 0) show(i - 1, -1); }
+    else if (e.key === 'Tab') { // keep keyboard focus inside the tour card while it is open
+      const f = $$('.tour-card button:not([hidden])', root); if (!f.length) return;
+      const k = f.indexOf(document.activeElement);
+      e.preventDefault(); e.stopPropagation();
+      f[(k < 0 ? 0 : k + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus();
+    }
   }
   function end() {
     if (!root) return;
-    root.remove(); root = null;
+    root.remove(); root = null; cancelAnimationFrame(trackRaf);
     document.removeEventListener('keydown', onKey, true);
     window.removeEventListener('resize', place);
     drawer(null);
-    if (before && S.side !== before.side) { S.side = before.side; renderSide(); }
     try { localStorage.setItem(KEY, '1'); } catch { }
-    save();
+    // Put back the view, page and side panel she had before (the tour only opens a page to point at it).
+    const p = P();
+    if (before) {
+      let changed = false;
+      if (S.side !== before.side) { S.side = before.side; changed = true; }
+      if (p.view !== before.view || p.current !== before.current || MODE !== before.mode) { p.view = before.view; p.current = before.current; MODE = before.mode; changed = true; }
+      if (changed) { save(); render(); }
+      if (before.back && before.back.isConnected && before.back.focus) before.back.focus();
+    }
   }
   function init() {
     let done = false; try { done = !!localStorage.getItem(KEY); } catch { }

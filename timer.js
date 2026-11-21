@@ -12,8 +12,18 @@ const Timer = (() => {
   const running = () => !!t.endsAt, paused = () => !t.endsAt && t.left != null;
   const msLeft = () => running() ? Math.max(0, t.endsAt - Date.now()) : paused() ? t.left : t.mins * 60000;
   const fmt = ms => { const s = Math.ceil(ms / 1000), m = Math.floor(s / 60); return m + ':' + String(s % 60).padStart(2, '0'); };
-  // Words across every page that isn't in the Trash, so lore and notes count as writing too.
-  const words = () => { try { return docs().filter(d => !inTrash(d.id)).reduce((n, d) => n + wordsIn(d.content), 0); } catch { return 0; } };
+  // Words across every grimoire (not just the open one) and every page outside the Trash, so switching
+  // books mid-sprint doesn't make "words so far" jump.
+  const words = () => {
+    try {
+      let n = 0;
+      for (const id of S.order) {
+        const p = S.projects[id]; if (!p) continue;
+        for (const d of Object.values(p.items)) if (d.type === 'doc' && rootOf(d.id, p) !== 'trash') n += wordsIn(d.content);
+      }
+      return n;
+    } catch { return 0; }
+  };
   const written = () => Math.max(0, words() - (t.startWords || 0));
 
   function paint() {
@@ -91,7 +101,7 @@ const Timer = (() => {
     pop.style.top = (r.bottom + 8) + 'px';
     pop.addEventListener('click', onPop);
     pop.addEventListener('change', e => { if (e.target.id === 'tmMins') setMins(e.target.value); if (e.target.dataset.tm === 'sound') { t.sound = e.target.checked; keep(); } });
-    pop.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'tmMins') { setMins(e.target.value); start(); } });
+    pop.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'tmMins') { setMins(e.target.value); start(); closePop(); } });
     setTimeout(() => { const f = pop && (pop.querySelector('[data-tm="start"],[data-tm="pause"]')); f && f.focus(); }, 0);
   }
   function closePop() { if (pop) { pop.remove(); pop = null; } }
@@ -114,6 +124,8 @@ const Timer = (() => {
     document.addEventListener('pointerdown', e => { if (pop && !pop.contains(e.target) && e.target !== b) closePop(); }, true);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop) { e.stopPropagation(); closePop(); b.focus(); } }, true);
     window.addEventListener('resize', closePop);
+    // Another tab started, paused or stopped the timer: follow it instead of overwriting it later.
+    window.addEventListener('storage', e => { if (e.key === KEY) { t = load(); loop(); } });
     // A timer that ran out while the page was closed finishes quietly (no sound without a tap).
     if (running() && msLeft() <= 0) { const n = written(); t.endsAt = null; t.left = null; keep(); toast(`✦ Your focus timer ended while Rosequill was closed${n ? ` (${fmtN(n)} words)` : ''}.`, 6000); }
     loop();

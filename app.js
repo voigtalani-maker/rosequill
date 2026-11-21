@@ -110,6 +110,7 @@ let S = null;          // whole app state
 let MODE = 'write';    // editor: write | read
 let saveT = 0, dirty = false, flushing = null, saveFailed = false, retryT = 0, retryMs = 5000;
 let baseState = null;  // a copy of S as last read or written: the common ancestor for merging tabs
+let mergeClashes = []; // titles changed in two tabs at once during the last merge
 const TAB = uid();     // identifies this tab when several are open
 const snapshotBase = () => { try { baseState = structuredClone(S); } catch { baseState = JSON.parse(JSON.stringify(S)); } };
 
@@ -132,14 +133,21 @@ async function flush() {
 async function writeState() {
   dirty = false;
   try {
-    let merged = false;
+    let merged = false; mergeClashes = [];
     await Store.update('state', stored => {
       if (stored && stored.projects && (stored.rev || 0) > (S.rev || 0) && stored.writer !== TAB) { S = mergeRemote(stored); merged = true; }
       S.rev = Math.max(S.rev || 0, (stored && stored.rev) || 0) + 1; S.writer = TAB;
+      // The base copy is exactly what is being written, taken here (not after the commit), so
+      // anything typed while the write is in flight still counts as a change at the next merge.
+      snapshotBase();
       return S;
     });
-    snapshotBase();
-    if (merged) { rerenderKeepCaret(); toast('✦ Merged with changes saved in another tab'); }
+    if (merged) {
+      rerenderKeepCaret();
+      toast(mergeClashes.length
+        ? `✦ “${mergeClashes[0]}”${mergeClashes.length > 1 ? ` and ${mergeClashes.length - 1} more` : ''} changed in two tabs. This tab’s version was kept; the other is saved as a snapshot (Inspector) or a map copy.`
+        : '✦ Merged with changes saved in another tab', 9000);
+    }
     try { localStorage.removeItem('rq_pending'); } catch { }
     clearTimeout(retryT); retryMs = 5000;
     if (saveFailed) toast('✦ Saving works again');
@@ -176,10 +184,27 @@ function mergeRemote(R) {
     if (!rp) { if (!bp || J(lp) !== J(bp)) { R.projects[pid] = lp; if (!R.order.includes(pid)) R.order.push(pid); } continue; } // new here, or changed here after the other tab deleted it
     for (const k of ['name', 'author', 'target', 'sessionTarget']) if (!bp || J(lp[k]) !== J(bp[k])) rp[k] = lp[k];
     const bi = (bp && bp.items) || {};
-    for (const [id, it] of Object.entries(lp.items)) if (!bi[id] || J(it) !== J(bi[id])) rp.items[id] = it; // added or changed here
+    for (const [id, it] of Object.entries(lp.items)) {
+      if (bi[id] && J(it) === J(bi[id])) continue; // unchanged here: the other tab's version stands
+      const other = rp.items[id];
+      // Changed in BOTH tabs: this tab's text wins, and the other tab's text becomes a snapshot so nothing is lost.
+      if (bi[id] && other && J(other) !== J(bi[id]) && other.type === 'doc' && other.content !== it.content) {
+        it.snapshots = [{ t: Date.now(), name: 'From another tab', content: other.content }, ...(it.snapshots || [])].slice(0, 40);
+        mergeClashes.push(it.title || 'Untitled');
+      }
+      rp.items[id] = it; // added or changed here
+    }
     for (const id of Object.keys(bi)) if (!lp.items[id]) delete rp.items[id];                              // deleted here
     const bm = (bp && bp.maps) || {}; rp.maps = rp.maps || {};
-    for (const [id, m] of Object.entries(lp.maps || {})) if (!bm[id] || J(m) !== J(bm[id])) rp.maps[id] = m;
+    for (const [id, m] of Object.entries(lp.maps || {})) {
+      if (bm[id] && J(m) === J(bm[id])) continue;
+      const other = rp.maps[id];
+      if (bm[id] && other && J(other) !== J(bm[id]) && J(other) !== J(m)) { // a map changed in both tabs: keep the other one as its own map
+        const copyId = uid(); rp.maps[copyId] = { ...other, id: copyId, name: other.name + ' (other tab)' }; rp.mapOrder = [...(rp.mapOrder || []), copyId];
+        mergeClashes.push(m.name || 'Map');
+      }
+      rp.maps[id] = m;
+    }
     for (const id of Object.keys(bm)) if (!(lp.maps || {})[id]) delete rp.maps[id];
     // Every page must sit in its folder's list; children lists taken from either side may miss the other's additions.
     for (const it of Object.values(rp.items)) if (it.parent && rp.items[it.parent] && rp.items[it.parent].type === 'folder' && !rp.items[it.parent].children.includes(it.id)) rp.items[it.parent].children.push(it.id);
@@ -1010,6 +1035,8 @@ const ORACLE = {
     return h || '<p class="muted">No describing words found. This works best with nouns (like “forest”) and adjectives (like “ancient”).</p>';
   },
   async rel(w) {
+    // Datamuse: rel_spc = "kind of" (gondola → boat), rel_gen = "more general than" (boat → gondola).
+    // Checked live on 2026-11-21, so "is a kind of" uses rel_spc and "Kinds of" uses rel_gen. Not swapped.
     const [a, b] = await Promise.all([getJSON(DM + 'rel_trg=' + enc(w) + '&max=50'), getJSON(DM + 'rel_spc=' + enc(w) + '&max=20')]);
     const c = await getJSON(DM + 'rel_gen=' + enc(w) + '&max=30').catch(() => []);
     let h = '';
@@ -1308,6 +1335,7 @@ async function importBackup(file) {
     if (typeof p.id !== 'string' || !p.id) p.id = uid();
     normalizeProject(p); // fills in missing folders, fields and numbers so nothing crashes later
     if (S.projects[p.id]) { if (!await confirmBox(`“${esc(p.name)}” is already here. Import it as a separate copy?`, 'Import copy')) return; p.id = uid(); p.name += ' (imported)'; }
+    if (typeof Backup !== 'undefined') Backup.unforget(p.id); // it may have been deleted here earlier: let it sync again
     S.projects[p.id] = p; S.order.push(p.id); S.current = p.id; ensureDay(); save(); render(); toast(`Imported “${p.name}” ✦`);
   } catch { toast('That file is not a Rosequill backup.'); }
 }
