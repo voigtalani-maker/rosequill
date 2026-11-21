@@ -2,13 +2,13 @@
 /* Rosequill backups. Rosequill already saves every keystroke in the browser (app.js). This adds:
    1. Device:  asks the browser to keep that storage permanently, so it is never cleared to free space.
    2. Files:   once a folder is chosen, writes a full backup, 14 daily copies and every page as a .md file there.
-   3. Cloud:   a private copy in her Supabase account (same login as the Study Hub), with 30 daily versions
+   3. Cloud:   a private copy in her own Rosequill account (username + password), with 30 daily versions
                kept by the database, synced to her other devices. If two devices both changed a grimoire,
                both versions are kept, so nothing is ever overwritten silently. */
 const Backup = (() => {
   const SB_URL = 'https://hontxqtggrvxybamqrnh.supabase.co';
   const SB_KEY = 'sb_publishable__gdf9hPZ-q7LUOkpcwkyLg_6wUW0N3y';
-  const EMAIL_SUFFIX = '@her-hub.local'; // the Study Hub turns a username into this kind of address
+  const EMAIL_SUFFIX = '@rosequill.local'; // a username becomes this address, so Rosequill accounts never clash with other apps' logins
   const K = { session: 'rq_session', cloud: 'rq_cloud:', removed: 'rq_cloud_removed:', files: 'rq_files', lastExport: 'rq_last_export', nudge: 'rq_nudge' };
   const ls = {
     get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch { return d; } },
@@ -274,7 +274,7 @@ const Backup = (() => {
   }
 
   /* ---------- the Backups window ---------- */
-  let cloudList = null, versions = {}, mode = 'in';
+  let cloudList = null, versions = {};
   async function open() { openModal('<div id="bkModal"></div>', 'wide'); drawModal(); if (session) { refreshList(); } }
   async function refreshList() {
     try { cloudList = await rest('rq_projects?select=id,name,words,updated_at&order=updated_at.desc'); } catch { cloudList = null; }
@@ -291,12 +291,12 @@ const Backup = (() => {
     else files = `<p class="muted">Pick a folder once, and Rosequill keeps copies there as you write. Choose one inside <b>OneDrive</b> (e.g. Documents) and OneDrive backs it up too.</p><div class="bk-act"><button class="primary" data-bk="folder">Choose a backup folder</button></div>`;
     let cloud;
     if (!session) {
-      cloud = `<p class="muted">Keeps a private copy online with 30 days of daily versions, and brings your writing to your other devices. Use the <b>same username and password as your Study Hub</b>.</p>
+      cloud = `<p class="muted">Keeps a private copy online with 30 days of daily versions, and brings your writing to your other devices. Only you can see it.</p>
         ${st.cloudErr ? `<p class="warn">${esc(st.cloudErr)}</p>` : ''}
-        <form class="bk-form" id="bkForm"><input class="m-field" id="bkUser" placeholder="Username" autocomplete="username" autocapitalize="off" required>
-        <input class="m-field" id="bkPass" type="password" placeholder="Password" autocomplete="${mode === 'up' ? 'new-password' : 'current-password'}" required minlength="6">
-        <button class="primary" id="bkGo">${mode === 'up' ? 'Create account and back up' : 'Sign in and back up'}</button></form>
-        <p class="bk-small">${mode === 'up' ? 'Already have a Study Hub account? <button type="button" class="linkish" data-bk="modein">Sign in instead</button>' : 'No account yet? <button type="button" class="linkish" data-bk="modeup">Create one</button>'}</p>
+        <p class="bk-small"><b>First time?</b> Choose a username and a password (at least 6 characters) and press <b>Create my account</b>. On your other devices, use the same two and press <b>Sign in</b>.</p>
+        <form class="bk-form" id="bkForm"><input class="m-field" id="bkUser" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+        <input class="m-field" id="bkPass" type="password" placeholder="Password" autocomplete="current-password" required minlength="6">
+        <div class="bk-go"><button class="primary" data-mode="up">Create my account</button><button class="ghost" data-mode="in">Sign in</button></div></form>
         <p class="bk-msg" id="bkMsg"></p>`;
     } else {
       const lv = st.cloud === 'ok' ? `<span class="ok">✓ On.</span> Last backed up ${ago(st.lastCloud)}.` : st.cloud === 'syncing' ? 'Backing up…' : st.cloud === 'offline' ? '<span class="warn">Waiting for internet.</span> It backs up as soon as you are online.' : `<span class="warn">${esc(st.cloudErr || 'Needs attention.')}</span>`;
@@ -327,7 +327,6 @@ const Backup = (() => {
     if (a === 'folder') return chooseFolder();
     if (a === 'reconnect') return reconnect();
     if (a === 'writenow') { await writeFolder(true); toast('❧ Written to your folder'); return; }
-    if (a === 'modeup' || a === 'modein') { mode = a === 'modeup' ? 'up' : 'in'; return drawModal(); }
     if (a === 'syncnow') { await syncNow(); await refreshList(); if (st.cloud === 'ok') toast('☁ Backed up'); return; }
     if (a === 'signout') { if (await confirmBox('Sign out of the cloud backup on this device? Your writing stays here, but it stops being backed up online.', 'Sign out')) { signOut(); open(); } else open(); return; }
     if (a === 'versions') {
@@ -360,11 +359,16 @@ const Backup = (() => {
   }
   async function onModalSubmit(e) {
     if (e.target.id !== 'bkForm') return; e.preventDefault();
-    const msg = $('#bkMsg'), go = $('#bkGo'); go.disabled = true; msg.textContent = mode === 'up' ? 'Creating your account…' : 'Signing in…';
-    try { await signIn($('#bkUser').value, $('#bkPass').value, mode === 'up'); mode = 'in'; drawModal(); refreshList(); toast('☁ Cloud backup is on'); }
+    const up = !!(e.submitter && e.submitter.dataset.mode === 'up'), msg = $('#bkMsg'), btns = $$('#bkForm button');
+    btns.forEach(b => { b.disabled = true; }); msg.textContent = up ? 'Creating your account…' : 'Signing in…';
+    try { await signIn($('#bkUser').value, $('#bkPass').value, up); drawModal(); refreshList(); toast(up ? '☁ Account made. Cloud backup is on' : '☁ Signed in. Cloud backup is on'); }
     catch (err) {
-      go.disabled = false;
-      msg.textContent = /invalid login/i.test(err.message) ? 'That username and password don’t match. Use the same ones as your Study Hub.' : /already registered/i.test(err.message) ? 'That username already has an account. Sign in instead.' : err.message;
+      btns.forEach(b => { b.disabled = false; });
+      const m = err.message || '';
+      msg.textContent = /invalid login/i.test(m) ? 'That username and password don’t match. First time here? Press Create my account instead.'
+        : /already registered|already exists/i.test(m) ? 'That username is taken. If it is yours, press Sign in; otherwise choose another username.'
+        : /password/i.test(m) && /6|short|weak/i.test(m) ? 'The password needs at least 6 characters.'
+        : m;
     }
   }
 

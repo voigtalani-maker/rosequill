@@ -349,6 +349,8 @@ svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-l
 .bk-act{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.6rem}
 .bk-form{display:grid;grid-template-columns:1fr 1fr auto;gap:.5rem;margin-top:.6rem}
 .bk-small{font-size:.8rem;color:var(--muted)}
+.bk-go{display:flex;gap:.4rem}
+.bk-go button{white-space:nowrap}
 .bk-msg{font-size:.85rem;min-height:1.2em;margin:.2rem 0 0}
 .linkish{color:var(--rose2);text-decoration:underline}
 .bk-row{border-top:1px dashed var(--line);padding:.55rem 0;display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
