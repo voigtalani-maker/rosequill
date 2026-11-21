@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rosequill</title>
+<meta name="description" content="A pink fantasy writing studio: a manuscript binder and corkboard, linked lore notes, and a word oracle.">
+<meta name="theme-color" content="#d63a83">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Cinzel+Decorative:wght@700&family=Lora:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <button class="ibtn only-m" id="btnBinder" aria-label="Open the binder" title="Binder">☰</button>
+    <div class="logo"><span class="spark">✦</span><span class="logo-t">Rosequill</span></div>
+    <button class="proj" id="btnProj" title="Your grimoires"><span id="projName">…</span><span class="caret-d">▾</span></button>
+    <nav class="views" id="views">
+      <button data-view="write">Write</button>
+      <button data-view="cork">Corkboard</button>
+      <button data-view="outline">Outline</button>
+      <button data-view="graph">Constellation</button>
+    </nav>
+    <div class="spacer"></div>
+    <button class="goals" id="btnGoals" title="Writing goals">
+      <span class="g-row"><span class="g-lbl">Today</span><span class="bar"><i id="gToday"></i></span><span class="g-n" id="gTodayN">0</span></span>
+      <span class="g-row"><span class="g-lbl">Tale</span><span class="bar"><i id="gTotal"></i></span><span class="g-n" id="gTotalN">0</span></span>
+    </button>
+    <span class="saved" id="saved"></span>
+    <button class="ibtn" id="btnSearch" title="Quick switcher (Ctrl+K)" aria-label="Quick switcher">⌕</button>
+    <button class="tbtn" id="btnCompile" title="Compile your manuscript">Compile</button>
+    <button class="ibtn" id="btnTheme" title="Day / night" aria-label="Switch theme">☾</button>
+    <button class="ibtn only-m" id="btnSide" aria-label="Open the word oracle" title="Oracle & inspector">✧</button>
+  </header>
+  <div class="body">
+    <aside class="binder" id="binder">
+      <div class="b-search"><input id="search" type="search" placeholder="Search pages or #tags" autocomplete="off"></div>
+      <div class="b-actions">
+        <button id="bNewDoc" title="New page">+ Page</button>
+        <button id="bNewFolder" title="New folder">+ Folder</button>
+        <button id="bNewLore" title="New lore note from a template">+ Lore</button>
+      </div>
+      <div class="tree" id="tree"></div>
+      <div class="tags" id="tags"></div>
+    </aside>
+    <main id="main" class="main"></main>
+    <aside class="side" id="side">
+      <div class="side-tabs">
+        <button data-side="oracle">Word Oracle</button>
+        <button data-side="inspect">Inspector</button>
+      </div>
+      <div id="sideBody" class="side-body"></div>
+    </aside>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<div id="menu" class="menu" hidden></div>
+<div id="ac" class="ac" hidden></div>
+<div id="modal" class="modal-bg" hidden><div class="modal" id="modalBox" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" role="status"></div>
+<div class="focus-bar" id="focusBar"><span id="focusWc"></span><button id="focusExit">Leave focus ✕</button></div>
+<input type="file" id="importFile" accept=".json,application/json" hidden>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "id": "/rosequill/",
+  "name": "Rosequill",
+  "short_name": "Rosequill",
+  "description": "A pink fantasy writing studio: manuscript binder and corkboard, linked lore notes, and a word oracle.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#fdeef5",
+  "theme_color": "#d63a83",
+  "categories": ["productivity", "education", "books"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
