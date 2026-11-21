@@ -110,6 +110,7 @@ async function writeState() {
     if (saveFailed) toast('✦ Saving works again');
     saveFailed = false; setSaved(dirty ? 'Saving…' : 'Saved ✦');
     if (bc) bc.postMessage({ type: 'saved', tab: TAB, rev: S.rev });
+    if (typeof Backup !== 'undefined') Backup.changed(); // folder copy + cloud backup follow a few seconds later
   } catch (e) {
     dirty = true; saveFailed = true; setSaved('⚠ Not saved', true);
     toast('⚠ Rosequill could not save. Your device may be full. Use the grimoire menu ▾ → Export backup to keep a copy.', 9000);
@@ -245,7 +246,7 @@ function mkItem(p, type, title, parentId, extra = {}, index) {
 function newProject(name, sample) {
   const p = { id: uid(), name, created: Date.now(), target: 50000, sessionTarget: 500, author: '', dayStart: {}, items: {}, roots: {}, open: {}, current: null, view: 'write' };
   for (const [k, t] of ROOTS) { const r = mkItem(p, 'folder', t, null, { root: k }); p.roots[k] = r.id; p.open[r.id] = k !== 'trash'; }
-  if (sample) seedSample(p); else p.current = mkItem(p, 'doc', 'Chapter One', p.roots.manuscript).id;
+  if (sample) { seedSample(p); p.sample = true; } else p.current = mkItem(p, 'doc', 'Chapter One', p.roots.manuscript).id;
   S.projects[p.id] = p; S.order.push(p.id); S.current = p.id;
   return p;
 }
@@ -338,6 +339,7 @@ Everything saves on this device automatically. Use **Grimoire ▾ → Export bac
   ensureDay();
   render();
   if (dirty) flush(); else setSaved('Saved ✦');
+  if (typeof Backup !== 'undefined') Backup.init();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
 
@@ -1206,6 +1208,8 @@ function projectMenu(x, y) {
   const items = [{ h: 'Your grimoires' }, ...S.order.map(id => ({ label: S.projects[id].name, cur: id === S.current, act: () => { S.current = id; ensureDay(); OR.sel = null; save(); render(); } })), { sep: 1 },
     { label: '✦ New grimoire…', act: async () => { const n = await ask('Name your new grimoire', 'Untitled tale', 'Create'); if (n == null) return; newProject(n.trim() || 'Untitled tale', false); ensureDay(); save(); render(); } },
     { label: 'Rename this grimoire…', act: async () => { const n = await ask('Rename grimoire', P().name); if (n == null) return; P().name = n.trim() || P().name; save(); renderHeader(); } },
+    { label: '☁ Backups & cloud…', act: () => Backup.open() },
+    { label: '📜 Compile the book…', act: compileModal },
     { label: '⇩ Export backup (.json)', act: exportBackup },
     { label: '⇧ Import backup…', act: () => $('#importFile').click() }];
   if (S.order.length > 1) items.push({ sep: 1 }, { label: 'Delete this grimoire…', danger: true, act: deleteProject });
@@ -1216,7 +1220,7 @@ function download(name, data, type) {
   a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 const safeName = s => (s || 'rosequill').replace(/[\\/:*?"<>|]+/g, '').trim() || 'rosequill';
-function exportBackup() { const p = P(); download(safeName(p.name) + ' — ' + today() + '.rosequill.json', JSON.stringify({ app: 'rosequill', v: 1, project: p }, null, 1), 'application/json'); toast('Backup downloaded ✦'); }
+function exportBackup() { const p = P(); try { localStorage.setItem('rq_last_export', String(Date.now())); } catch { } download(safeName(p.name) + ' — ' + today() + '.rosequill.json', JSON.stringify({ app: 'rosequill', v: 1, project: p }, null, 1), 'application/json'); toast('Backup downloaded ✦'); }
 async function importBackup(file) {
   try {
     const j = JSON.parse(await file.text()), p = j && (j.project || j);
@@ -1230,6 +1234,7 @@ async function importBackup(file) {
 async function deleteProject() {
   const p = P();
   if (!await confirmBox(`Delete the whole grimoire “${esc(p.name)}” and every page in it? Export a backup first if you might want it again. This can't be undone.`, 'Delete grimoire', true)) return;
+  if (typeof Backup !== 'undefined') Backup.forget(p.id); // its cloud copy stays as a backup (Backups → Add to this device)
   delete S.projects[p.id]; S.order = S.order.filter(id => id !== p.id); S.current = S.order[0]; ensureDay(); save(); render();
 }
 function goalsModal() {

@@ -1,8 +1,8 @@
 // Rosequill service worker: network-first for the app shell (so updates show at once),
 // falling back to the cache offline. Word-oracle API calls are never cached here.
-const CACHE = 'rq-v2';
+const CACHE = 'rq-v3';
 const FONT_CACHE = 'rq-fonts'; // kept across versions so fonts aren't downloaded again on every update
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon-180.png'];
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'backup.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon-180.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
