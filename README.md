@@ -13,6 +13,8 @@ Everything you write saves as you type in your own browser (IndexedDB). The ☁ 
 - **A folder** you choose (Chrome or Edge on a computer). It gets a full backup, a **Word document** (`.docx`) of each grimoire, 14 daily copies and every page as a `.md` file. Choose a folder in Google Drive (via Google Drive for desktop) and the Word document opens in Google Docs. OneDrive works too.
 - Any cloud backup or daily version can also be downloaded as a Word document, and **Compile → Word** makes a real `.docx`.
 - A **guided tour** runs the first time Rosequill opens; replay it from **▾ → Take the tour**.
+- **Maps:** generate a detailed fantasy map (coasts, mountains, forests, rivers, named towns and regions) and reshape it with brushes, places, roads, borders and labels. Places can link to Lore pages, and a map saves as a picture.
+- **Focus timer:** a small ⏱ in the top bar for writing sprints.
 - **A private cloud backup** in Supabase, under a Rosequill account you make once (just a username and a password). It keeps 30 days of daily versions and syncs to your other devices. Row-level security means only you can read your rows.
 
 Word lookups use the free [Datamuse](https://www.datamuse.com/api/), [Free Dictionary](https://dictionaryapi.dev/) and [MyMemory](https://mymemory.translated.net/) services. Only the word you look up is sent to them.

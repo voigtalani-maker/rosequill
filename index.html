@@ -22,9 +22,10 @@
     <button class="proj" id="btnProj" title="Your grimoires"><span id="projName">…</span><span class="caret-d">▾</span></button>
     <nav class="views" id="views">
       <button data-view="write">Write</button>
-      <button data-view="cork">Corkboard</button>
+      <button data-view="cork"><span class="vl">Corkboard</span><span class="vs">Cards</span></button>
       <button data-view="outline">Outline</button>
-      <button data-view="graph">Constellation</button>
+      <button data-view="graph"><span class="vl">Constellation</span><span class="vs">Stars</span></button>
+      <button data-view="maps">Maps</button>
     </nav>
     <div class="spacer"></div>
     <button class="goals" id="btnGoals" title="Writing goals">
@@ -32,6 +33,7 @@
       <span class="g-row"><span class="g-lbl">Tale</span><span class="bar"><i id="gTotal"></i></span><span class="g-n" id="gTotalN">0</span></span>
     </button>
     <span class="saved" id="saved"></span>
+    <button class="tmbtn" id="btnTimer" aria-label="Focus timer" title="Focus timer">⏱</button>
     <button class="ibtn bk-off" id="btnBackup" aria-label="Backups" title="Backups">☁</button>
     <button class="ibtn" id="btnSearch" title="Quick switcher (Ctrl+K)" aria-label="Quick switcher">⌕</button>
     <button class="tbtn" id="btnCompile" title="Compile your manuscript">Compile</button>
@@ -64,11 +66,13 @@
 <div id="ac" class="ac" hidden></div>
 <div id="modal" class="modal-bg" hidden><div class="modal" id="modalBox" role="dialog" aria-modal="true"></div></div>
 <div id="toast" class="toast" role="status"></div>
-<div class="focus-bar" id="focusBar"><span id="focusWc"></span><button id="focusExit">Leave focus ✕</button></div>
+<div class="focus-bar" id="focusBar"><span id="focusTimer"></span><span id="focusWc"></span><button id="focusExit">Leave focus ✕</button></div>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
 <script src="app.js"></script>
 <script src="docx.js"></script>
 <script src="backup.js"></script>
+<script src="maps.js"></script>
+<script src="timer.js"></script>
 <script src="tour.js"></script>
 </body>
 </html>

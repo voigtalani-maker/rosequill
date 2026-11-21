@@ -193,7 +193,7 @@ function normalizeProject(p) {
   p.dayStart = p.dayStart && typeof p.dayStart === 'object' ? p.dayStart : {};
   p.name = String(p.name || 'Untitled tale'); p.author = String(p.author || '');
   p.target = num(p.target, 50000); p.sessionTarget = num(p.sessionTarget, 500);
-  if (!['write', 'cork', 'outline', 'graph'].includes(p.view)) p.view = 'write';
+  if (!['write', 'cork', 'outline', 'graph', 'maps'].includes(p.view)) p.view = 'write';
   for (const [k, it] of Object.entries(p.items)) {
     if (!it || typeof it !== 'object') { delete p.items[k]; continue; }
     it.id = k; it.type = it.type === 'folder' ? 'folder' : 'doc';
@@ -221,6 +221,7 @@ function normalizeProject(p) {
   const research = p.items[p.roots.research]; // anything unreachable lands in Research rather than vanishing
   for (const it of Object.values(p.items)) if (!seen.has(it.id)) { seen.add(it.id); research.children.push(it.id); it.parent = research.id; if (it.type === 'folder') walk(it); }
   if (!p.items[p.current]) p.current = p.roots.manuscript;
+  if (typeof Maps !== 'undefined') Maps.normalize(p); else { p.maps = p.maps || {}; p.mapOrder = p.mapOrder || []; }
   return p;
 }
 function normalizeState(st) {
@@ -319,6 +320,8 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
 
 /* ================= boot ================= */
 (async function boot() {
+  // Wait until every script on the page (docx, backup, maps, timer, tour) has loaded before starting.
+  if (document.readyState === 'loading') await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
   // Opening storage can wait on another tab; say so instead of showing a blank page.
   const slow = setTimeout(() => { $('#main').innerHTML = '<div class="empty-main">Opening your saved work…<br>If this takes long, close other Rosequill tabs and reload this one.</div>'; }, 2500);
   await Store.init();
@@ -340,6 +343,7 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
   render();
   if (dirty) flush(); else setSaved('Saved ✦');
   if (typeof Backup !== 'undefined') Backup.init();
+  if (typeof Timer !== 'undefined') Timer.init();
   if (typeof Tour !== 'undefined') Tour.init(); // first launch on this device: show the guided tour
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
 })();
@@ -419,6 +423,7 @@ function renderMain() {
   hideAC();
   const it = I(p.current);
   if (p.view === 'graph') return renderGraph(main);
+  if (p.view === 'maps') return typeof Maps !== 'undefined' ? Maps.render(main) : (main.innerHTML = '<div class="empty-main">Maps are loading…</div>');
   if (p.view === 'outline') return renderOutline(main, folderFor(it));
   if (p.view === 'cork' || (it && it.type === 'folder')) return renderCork(main, folderFor(it));
   if (!it) { main.innerHTML = '<div class="empty-main">Choose a page from the binder.</div>'; return; }
@@ -818,6 +823,8 @@ function renderInspector() {
     extra += `<label class="lbl">Links from this page · ${out.length}</label><div class="lk">${out.length ? out.map(t => { const d = findByTitle(t); return `<button class="l ${d ? '' : 'missing'}" data-link="${esc(t)}">${d ? '' : '✦ '}${esc(t)}${d ? '' : ' <small>(not written yet, click to create)</small>'}</button>`; }).join('') : '<p class="help">Type [[ in your text to link another page.</p>'}</div>`;
     extra += `<label class="lbl">Backlinks · ${bl.length}</label><div class="lk">${bl.length ? bl.map(d => `<button class="l" data-open="${d.id}">${esc(d.title)}<span class="snip">${snippet(d.content, it.title)}</span></button>`).join('') : '<p class="help">No other page links here yet.</p>'}</div>`;
     if (um.length) extra += `<label class="lbl">Unlinked mentions · ${um.length}</label><div class="lk">${um.map(d => `<div class="row2"><button class="l" data-open="${d.id}">${esc(d.title)}<span class="snip">${snippet(d.content, it.title, true)}</span></button><button class="mini" data-linkall="${d.id}">Link</button></div>`).join('')}</div>`;
+    const onMaps = typeof Maps !== 'undefined' ? Maps.pinsLinkedTo(it.title) : [];
+    if (onMaps.length) extra += `<label class="lbl">On your maps · ${onMaps.length}</label><div class="lk">${onMaps.map(({ map, pin }) => `<button class="l" data-mappin="${map.id}|${pin.id}">🗺 ${esc(pin.name)}<span class="snip">on “${esc(map.name)}”</span></button>`).join('')}</div>`;
     extra += `<label class="lbl">Snapshots · ${it.snapshots.length}</label><button class="ghost" id="iSnap" style="width:100%">◷ Take a snapshot now</button>
       <div>${it.snapshots.map((s, i) => `<div class="snap"><span class="when">${esc(s.name || 'Snapshot')}<small>${fmtDate(s.t)} · ${fmtN(wordsIn(s.content))} words</small></span><button data-snapv="${i}">View</button><button data-snapr="${i}">Restore</button><button data-snapd="${i}" aria-label="Delete snapshot">✕</button></div>`).join('')}</div>`;
   } else {
@@ -1033,7 +1040,7 @@ function openItem(id, write) {
 }
 function select(id) {
   const p = P(); p.current = id;
-  if (p.view === 'graph') p.view = 'write';
+  if (p.view === 'graph' || p.view === 'maps') p.view = 'write';
   OR.sel = null; save(); render();
   document.body.classList.remove('show-binder');
 }
@@ -1127,7 +1134,8 @@ function renameItem(id, t, oldTitle) {
     docs().forEach(d => { const c = d.content.replace(re, () => '[[' + t); if (c !== d.content) { d.content = c; if (d !== it) n++; } });
     const ed = $('#ed');
     if (ed && P().current === id && ed.value !== it.content) { const s = ed.selectionStart; ed.value = it.content; ed.setSelectionRange(Math.min(s, ed.value.length), Math.min(s, ed.value.length)); updateDocWc(it); }
-    if (n) toast(`✦ Updated links in ${n} page${n > 1 ? 's' : ''}`);
+    if (typeof Maps !== 'undefined') n += Maps.renameLinks(old, t); // places on maps follow the rename too
+    if (n) toast(`✦ Updated links in ${n} place${n > 1 ? 's' : ''}`);
   }
   it.modified = Date.now(); save();
 }
@@ -1437,6 +1445,7 @@ function bindGlobal() {
     const l = e.target.closest('[data-look]'); if (l) return lookup(l.dataset.look);
     const au = e.target.closest('[data-audio]'); if (au) { new Audio(au.dataset.audio).play().catch(() => toast('Could not play the sound.')); return; }
     const lk = e.target.closest('[data-link]'); if (lk) return openLink(lk.dataset.link);
+    const mp = e.target.closest('[data-mappin]'); if (mp) { const [mapId, pinId] = mp.dataset.mappin.split('|'); document.body.classList.remove('show-side'); return Maps.showPin(mapId, pinId); }
     const op = e.target.closest('[data-open]'); if (op) return openItem(op.dataset.open, true);
     const la = e.target.closest('[data-linkall]'); if (la) {
       const it = I(P().current), d = I(la.dataset.linkall); let n = 0;

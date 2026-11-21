@@ -20,7 +20,7 @@ const Backup = (() => {
 
   /* ---------- content signature: what counts as a real change ---------- */
   // Only the writing and its structure; not which page is open, the view, or folders expanded.
-  const content = p => ({ id: p.id, name: p.name, author: p.author, target: p.target, sessionTarget: p.sessionTarget, roots: p.roots, items: p.items });
+  const content = p => ({ id: p.id, name: p.name, author: p.author, target: p.target, sessionTarget: p.sessionTarget, roots: p.roots, items: p.items, maps: p.maps || {}, mapOrder: p.mapOrder || [] });
   function canon(v) {
     if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
     if (v && typeof v === 'object') return '{' + Object.keys(v).sort().filter(k => v[k] !== undefined && k !== 'titleBefore').map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
@@ -219,6 +219,17 @@ const Backup = (() => {
           await writeFile(dir, [name], name + '.rosequill.json', backup);
           await writeFile(dir, [name, 'Daily backups'], `${name} ${day}.rosequill.json`, backup);
           await writeFile(dir, [name], name + '.docx', Word.projectDocx(p)); // the whole grimoire as a Word document
+          // Each map as a picture, rewritten only when the map changed.
+          if (typeof Maps !== 'undefined') {
+            f.maps = f.maps || {};
+            for (const m of Object.values(p.maps || {})) {
+              if (!force && f.maps[m.id] && f.maps[m.id].mod === m.modified) continue;
+              const old = f.maps[m.id]; if (old && old.file !== safe(m.name) + '.png') await removeFile(dir, [name, 'Maps'], old.file);
+              await writeFile(dir, [name, 'Maps'], safe(m.name) + '.png', await Maps.png(m, 1)); // lighter than Save picture's 2x
+              f.maps[m.id] = { mod: m.modified, file: safe(m.name) + '.png' };
+            }
+            for (const [mid, old] of Object.entries(f.maps)) if (!(p.maps || {})[mid]) { await removeFile(dir, [name, 'Maps'], old.file); delete f.maps[mid]; }
+          }
           // Readable copies of every page, mirroring the binder; only changed pages are rewritten.
           const seen = new Set();
           const walk = (fid, parts) => {
