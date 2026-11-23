@@ -130,6 +130,9 @@ svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-l
 /* ---------- editor ---------- */
 .ed-scroll{position:absolute;inset:0;overflow:auto;scroll-behavior:auto}
 .page{max-width:780px;margin:0 auto;padding:1.4rem 2rem 30vh}
+/* The writing column is a calm, plain sheet: the stars stay in the margins, never behind the words. */
+.ed-scroll .page{min-height:100%;background:var(--panel);border-left:1px solid var(--line);border-right:1px solid var(--line);box-shadow:0 0 40px -18px var(--glow)}
+.ed-scroll .ed-tools{background:var(--panel)}
 .crumbs{font-size:.74rem;color:var(--muted);font-family:var(--f-head);letter-spacing:.05em;display:flex;gap:.35rem;flex-wrap:wrap}
 .crumbs span+span::before{content:"❧";margin-right:.35rem;color:var(--gold)}
 .doc-title{width:100%;border:0;background:transparent;outline:none;font-family:var(--f-head);font-size:2rem;font-weight:700;color:var(--rose2);padding:.2rem 0 .3rem;letter-spacing:.02em}
