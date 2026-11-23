@@ -23,7 +23,9 @@ const Backup = (() => {
   const content = p => ({ id: p.id, name: p.name, author: p.author, target: p.target, sessionTarget: p.sessionTarget, roots: p.roots, items: p.items, maps: p.maps || {}, mapOrder: p.mapOrder || [] });
   function canon(v) {
     if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
-    if (v && typeof v === 'object') return '{' + Object.keys(v).sort().filter(k => v[k] !== undefined && k !== 'titleBefore').map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}';
+    // Big picture / map-terrain strings count by a short fingerprint (length + last characters) instead of
+    // in full: a change still changes the fingerprint (and pictures carry an `at` time too), but the check stays fast.
+    if (v && typeof v === 'object') return '{' + Object.keys(v).sort().filter(k => v[k] !== undefined && k !== 'titleBefore').map(k => JSON.stringify(k) + ':' + ((k === 'src' || k === 'heights') && typeof v[k] === 'string' && v[k].length > 2000 ? JSON.stringify('#' + v[k].length + ':' + v[k].slice(-40)) : canon(v[k]))).join(',') + '}';
     return JSON.stringify(v);
   }
   function sig(p) { const s = canon(content(p)); let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36) + '.' + s.length; }

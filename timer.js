@@ -70,8 +70,11 @@ const Timer = (() => {
   function stop() { t.endsAt = null; t.left = null; keep(); loop(); }
   function finish() {
     if (!running()) return;
-    const n = written();
-    t.endsAt = null; t.left = null; keep(); loop();
+    const n = written(), endedAt = t.endsAt;
+    // Several tabs may each reach the end. Only the first claims it (shared storage); the rest just show the end.
+    const shared = load();
+    if (shared.endsAt !== endedAt || shared.doneFor === endedAt) { t = shared; t.endsAt = null; t.left = null; loop(); return; }
+    t.doneFor = endedAt; t.endsAt = null; t.left = null; keep(); loop();
     chime();
     const b = $('#btnTimer'); if (b) { b.classList.add('done'); setTimeout(() => b.classList.remove('done'), 12000); }
     toast(`✦ Focus time is up${n ? `: ${fmtN(n)} words` : ''}. Time for a little break.`, 7000);
@@ -125,7 +128,13 @@ const Timer = (() => {
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && pop) { e.stopPropagation(); closePop(); b.focus(); } }, true);
     window.addEventListener('resize', closePop);
     // Another tab started, paused or stopped the timer: follow it instead of overwriting it later.
-    window.addEventListener('storage', e => { if (e.key === KEY) { t = load(); loop(); } });
+    window.addEventListener('storage', e => {
+      if (e.key !== KEY) return;
+      const was = t.endsAt; t = load();
+      // Another tab already finished this sprint: stop here quietly instead of chiming a second time.
+      if (was && !t.endsAt && t.doneFor === was) { clearTimeout(endT); }
+      loop();
+    });
     // A timer that ran out while the page was closed finishes quietly (no sound without a tap).
     if (running() && msLeft() <= 0) { const n = written(); t.endsAt = null; t.left = null; keep(); toast(`✦ Your focus timer ended while Rosequill was closed${n ? ` (${fmtN(n)} words)` : ''}.`, 6000); }
     loop();

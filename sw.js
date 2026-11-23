@@ -1,6 +1,6 @@
 // Rosequill service worker: network-first for the app shell (so updates show at once),
 // falling back to the cache offline. Word-oracle API calls are never cached here.
-const CACHE = 'rq-v15';
+const CACHE = 'rq-v16';
 const FONT_CACHE = 'rq-fonts'; // kept across versions so fonts aren't downloaded again on every update
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'docx.js', 'backup.js', 'maps.js', 'portraits.js', 'timer.js', 'tour.js', 'manifest.webmanifest', 'icon-v2.svg', 'icon-v2-192.png', 'icon-v2-512.png', 'icon-v2-maskable-512.png', 'apple-touch-icon-v2-180.png'];
 

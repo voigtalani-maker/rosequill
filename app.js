@@ -112,7 +112,13 @@ let saveT = 0, dirty = false, flushing = null, saveFailed = false, retryT = 0, r
 let baseState = null;  // a copy of S as last read or written: the common ancestor for merging tabs
 let mergeClashes = []; // titles changed in two tabs at once during the last merge
 const TAB = uid();     // identifies this tab when several are open
-const snapshotBase = () => { try { baseState = structuredClone(S); } catch { baseState = JSON.parse(JSON.stringify(S)); } };
+// Merges only need to know WHETHER something changed, so big picture data is reduced to a short fingerprint
+// (its length and last characters) in the base copy and in comparisons. That keeps every save light even
+// with many painted pictures, while the real pictures still save, sync and back up in full.
+const slim = (k, v) => (k === 'src' && typeof v === 'string' && v.length > 2000) ? '#img:' + v.length + ':' + v.slice(-40) : v;
+const slimJSON = x => JSON.stringify(x, slim);
+const baseCopy = () => JSON.parse(slimJSON(S));
+const snapshotBase = () => { baseState = baseCopy(); };
 
 /* Several tabs can be open at once. Each save bumps S.rev and tells the other tabs;
    an idle tab reloads the newer state, and a tab with unsaved edits merges before writing. */
@@ -133,19 +139,20 @@ async function flush() {
 async function writeState() {
   dirty = false;
   try {
-    let merged = false; mergeClashes = [];
+    let merged = false, nextBase = null; mergeClashes = [];
     await Store.update('state', stored => {
       if (stored && stored.projects && (stored.rev || 0) > (S.rev || 0) && stored.writer !== TAB) { S = mergeRemote(stored); merged = true; }
       S.rev = Math.max(S.rev || 0, (stored && stored.rev) || 0) + 1; S.writer = TAB;
-      // The base copy is exactly what is being written, taken here (not after the commit), so
-      // anything typed while the write is in flight still counts as a change at the next merge.
-      snapshotBase();
+      // The base copy is exactly what is being written, taken here (not after the commit), so anything typed
+      // while the write is in flight still counts as a change at the next merge…
+      nextBase = baseCopy();
       return S;
     });
+    baseState = nextBase; // …but it only becomes the base once the write really landed (an aborted write keeps the old base)
     if (merged) {
       rerenderKeepCaret();
       toast(mergeClashes.length
-        ? `✦ “${mergeClashes[0]}”${mergeClashes.length > 1 ? ` and ${mergeClashes.length - 1} more` : ''} changed in two tabs. This tab’s version was kept; the other is saved as a snapshot (Inspector) or a map copy.`
+        ? `✦ “${mergeClashes[0]}”${mergeClashes.length > 1 ? ` and ${mergeClashes.length - 1} more` : ''} changed in two tabs. Nothing was lost: the other version is in the page’s snapshots (Inspector), in the Trash, or a map copy.`
         : '✦ Merged with changes saved in another tab', 9000);
     }
     try { localStorage.removeItem('rq_pending'); } catch { }
@@ -178,7 +185,7 @@ function emergencySave() {
    Works item by item (pages, folders, maps), so edits to different pages in two tabs both survive. */
 function mergeRemote(R) {
   normalizeState(R);
-  const B = baseState || { projects: {} }, J = x => JSON.stringify(x);
+  const B = baseState || { projects: {} }, J = slimJSON; // same slim form as the base copy, so they compare
   for (const [pid, lp] of Object.entries(S.projects)) {
     const bp = B.projects && B.projects[pid], rp = R.projects[pid];
     if (!rp) { if (!bp || J(lp) !== J(bp)) { R.projects[pid] = lp; if (!R.order.includes(pid)) R.order.push(pid); } continue; } // new here, or changed here after the other tab deleted it
@@ -194,7 +201,15 @@ function mergeRemote(R) {
       }
       rp.items[id] = it; // added or changed here
     }
-    for (const id of Object.keys(bi)) if (!lp.items[id]) delete rp.items[id];                              // deleted here
+    for (const id of Object.keys(bi)) {
+      if (lp.items[id]) continue;
+      const other = rp.items[id];
+      // Deleted here, but the other tab edited it meanwhile: keep their version in the Trash rather than losing it.
+      if (other && J(other) !== J(bi[id]) && rp.roots.trash && rp.items[rp.roots.trash]) {
+        other.trashedFrom = other.parent; other.parent = rp.roots.trash;
+        mergeClashes.push((other.title || 'Untitled') + ' (kept in the Trash)');
+      } else delete rp.items[id]; // deleted here
+    }
     const bm = (bp && bp.maps) || {}; rp.maps = rp.maps || {};
     for (const [id, m] of Object.entries(lp.maps || {})) {
       if (bm[id] && J(m) === J(bm[id])) continue;
@@ -436,7 +451,7 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
    A window left open for days keeps running the code it loaded. So: ask for a new version whenever
    Rosequill comes back to the front and every 30 minutes; when one has arrived, show a small
    "Update" note, and switch over by itself while the window is in the background and all is saved. */
-const APP_VERSION = '2026-11-23.2';
+const APP_VERSION = '2026-11-23.3';
 let updateReady = false;
 function setupUpdates() {
   if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
@@ -456,12 +471,17 @@ function showUpdateNote() {
   const n = document.createElement('div'); n.id = 'updNote'; n.className = 'upd-note'; n.setAttribute('role', 'status');
   n.innerHTML = '✦ A new version of Rosequill is ready <button class="primary" id="updGo">Update</button><button class="upd-x" aria-label="Later">✕</button>';
   document.body.appendChild(n);
-  $('#updGo').onclick = async () => { $('#updGo').disabled = true; await flush(); location.reload(); };
+  $('#updGo').onclick = async () => {
+    $('#updGo').disabled = true; await flush();
+    // Never reload over writing that hasn't reached storage (for example while saving is failing).
+    if (dirty || saveFailed) { $('#updGo').disabled = false; toast('⚠ Some writing hasn’t saved yet, so Rosequill won’t update right now. Try again once it says “Saved ✦”.', 8000); return; }
+    location.reload();
+  };
   n.querySelector('.upd-x').onclick = () => n.remove();
 }
 function updateWhenIdle() { // the window just went into the background: switch over quietly if nothing is unsaved
   if (!updateReady || dirty || flushing || saveT) return;
-  flush().then(() => { if (!dirty) location.reload(); });
+  flush().then(() => { if (!dirty && !saveFailed) location.reload(); });
 }
 // Start-up could not read the library. Nothing is written; the writer can retry or save what is there.
 function bootFailed(msg, raw) {
