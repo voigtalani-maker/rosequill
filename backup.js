@@ -283,6 +283,22 @@ const Backup = (() => {
             f.pages[x.id] = { path, mod: x.modified };
           }
           for (const [pid, old] of Object.entries(f.pages)) if (!seen.has(pid)) { await removeOld(old.path); delete f.pages[pid]; }
+          // Painted pictures as .jpg files, one per page that has one, rewritten only when the picture changes.
+          if (typeof Portraits !== 'undefined') {
+            f.pics = f.pics || {}; const picFiles = new Set();
+            const pics = pages.filter(pg => pg.x.portrait).map(({ x }) => {
+              let file = safe(x.title) + '.jpg'; if (picFiles.has(file.toLowerCase())) file = safe(x.title + ' (' + x.id.slice(-4) + ')') + '.jpg';
+              picFiles.add(file.toLowerCase()); return { x, file };
+            });
+            for (const { x, file } of pics) {
+              const old = f.pics[x.id];
+              if (!force && old && old.at === x.portrait.at && old.file === file) continue;
+              if (old && old.file !== file && !picFiles.has(old.file.toLowerCase())) await removeFile(dir, [name, 'Portraits'], old.file);
+              await writeFile(dir, [name, 'Portraits'], file, Portraits.blobOf(x.portrait));
+              f.pics[x.id] = { at: x.portrait.at, file };
+            }
+            for (const [pid, old] of Object.entries(f.pics)) if (!pics.some(pc => pc.x.id === pid)) { if (!picFiles.has(old.file.toLowerCase())) await removeFile(dir, [name, 'Portraits'], old.file); delete f.pics[pid]; }
+          }
           // Keep 14 days of dated copies.
           try {
             const dd = await (await dir.getDirectoryHandle(name)).getDirectoryHandle('Daily backups');

@@ -453,6 +453,26 @@ svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.7;stroke-l
 .tm-sound input{accent-color:var(--rose)}
 .focus-bar #focusTimer:empty{display:none}
 
+/* ---------- painted pictures ---------- */
+.pt-grid{display:grid;grid-template-columns:240px minmax(0,1fr);gap:1.1rem;align-items:start}
+.pt-frame{border-radius:14px;overflow:hidden;border:1px solid var(--line);background:linear-gradient(160deg,var(--rose-faint),var(--gold-soft));box-shadow:var(--shadow-s);display:grid;place-items:center;position:relative}
+.pt-frame.portrait{aspect-ratio:512/704}.pt-frame.landscape{aspect-ratio:768/512}
+.pt-frame img{width:100%;height:100%;object-fit:cover;display:block}
+.pt-empty{color:var(--muted);text-align:center;font-style:italic;font-size:.9rem;line-height:1.8}
+.pt-frame.painting::after{content:"✦";position:absolute;inset:0;display:grid;place-items:center;font-size:2rem;color:#fff;background:color-mix(in srgb,var(--lilac) 35%,transparent);animation:pulse 1.4s ease-in-out infinite}
+.pt-desc{min-height:110px;resize:vertical;line-height:1.5}
+.pt-status{min-height:1.3em;font-size:.84rem;color:var(--rose2);margin:.7rem 0 0}
+.pt-status.warn{color:var(--danger)}
+.pt-act{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.5rem}
+.pt-note{font-size:.72rem;color:var(--muted);margin:.7rem 0 0}
+.pt-thumb{display:block;width:100%;border-radius:12px;overflow:hidden;border:1px solid var(--line);box-shadow:var(--shadow-s)}
+.pt-thumb img{display:block;width:100%;height:auto}
+.pt-thumb:hover{border-color:var(--rose)}
+.pt-add{width:100%}
+.pt-read{float:right;width:min(42%,230px);margin:.2rem 0 1rem 1.3rem;border-radius:14px;box-shadow:var(--shadow);border:1px solid var(--line)}
+.c-av{width:26px;height:26px;border-radius:50%;object-fit:cover;border:1px solid var(--line);flex:none}
+@media (max-width:720px){.pt-grid{grid-template-columns:1fr}.pt-frame{max-width:240px;margin:0 auto;width:100%}.pt-read{width:44%}}
+
 /* ---------- "new version ready" note ---------- */
 .upd-note{position:fixed;left:50%;bottom:1.2rem;transform:translateX(-50%);z-index:85;display:flex;align-items:center;gap:.6rem;background:var(--panel);color:var(--ink);border:1px solid var(--line2);border-radius:999px;padding:.4rem .5rem .4rem 1rem;box-shadow:var(--shadow);font-size:.86rem;max-width:calc(100vw - 32px)}
 .upd-note .primary{padding:.32rem .9rem;font-size:.8rem}

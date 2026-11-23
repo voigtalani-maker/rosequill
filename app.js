@@ -278,6 +278,7 @@ function normalizeProject(p) {
     it.target = num(it.target, 0);
     it.snapshots = Array.isArray(it.snapshots) ? it.snapshots.filter(s => s && typeof s.content === 'string').map(s => ({ t: +s.t || Date.now(), name: String(s.name || 'Snapshot'), content: s.content })) : [];
     it.created = +it.created || Date.now(); it.modified = +it.modified || it.created;
+    if (it.type === 'doc' && typeof Portraits !== 'undefined') Portraits.normalize(it); else if (it.type !== 'doc') delete it.portrait;
     if (it.type === 'folder') it.children = Array.isArray(it.children) ? it.children.filter(c => typeof c === 'string') : [];
     else delete it.children;
   }
@@ -435,7 +436,7 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
    A window left open for days keeps running the code it loaded. So: ask for a new version whenever
    Rosequill comes back to the front and every 30 minutes; when one has arrived, show a small
    "Update" note, and switch over by itself while the window is in the background and all is saved. */
-const APP_VERSION = '2026-11-23';
+const APP_VERSION = '2026-11-23.2';
 let updateReady = false;
 function setupUpdates() {
   if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
@@ -579,6 +580,7 @@ function renderEditor(main, it) {
       <button data-fmt="scene" title="Scene break">✦</button>
       <span class="tsep"></span>
       <button data-act="oracle" title="Look up the selected word (Ctrl+Shift+O)">✧<span class="tl"> Oracle</span></button>
+      <button data-act="paint" title="Paint a picture from the description">🖼<span class="tl"> Picture</span></button>
       <button data-act="snap" title="Save a snapshot of this page">◷<span class="tl"> Snapshot</span></button>
       <button data-act="focus" title="Focus mode">◎<span class="tl"> Focus</span></button>
       <span class="spacer"></span><span class="doc-wc" id="docWc"></span>
@@ -595,7 +597,10 @@ function renderEditor(main, it) {
   bindEditor(ed, it);
   requestAnimationFrame(() => autosize(ed));
 }
-function renderReader(it) { $('#reader').innerHTML = md(it.content) || '<p class="muted"><i>Nothing written yet.</i></p>'; }
+function renderReader(it) {
+  const pic = it.portrait ? `<img class="pt-read" src="${it.portrait.src}" alt="Picture of ${esc(it.title)}">` : '';
+  $('#reader').innerHTML = pic + (md(it.content) || '<p class="muted"><i>Nothing written yet.</i></p>');
+}
 function autosize(ed) {
   if (!ed || ed.hidden) return;
   const sc = $('#edScroll'), top = sc ? sc.scrollTop : 0;
@@ -665,6 +670,7 @@ function bindEditor(ed, it) {
     if (b.dataset.mode) { MODE = b.dataset.mode; renderEditor($('#main'), it); return; }
     if (b.dataset.fmt) { if (MODE === 'read') { MODE = 'write'; renderEditor($('#main'), it); } fmt(b.dataset.fmt); return; }
     if (b.dataset.act === 'oracle') oracleFromEditor();
+    if (b.dataset.act === 'paint') Portraits.open(it.id);
     if (b.dataset.act === 'snap') takeSnapshot(it);
     if (b.dataset.act === 'focus') setFocus(true);
   });
@@ -795,7 +801,7 @@ function inline(s) {
 function renderCork(main, f) {
   const p = P(), kids = f.children.map(id => p.items[id]);
   const card = k => `<article class="card lbl-${k.label || 'none'} ${k.id === p.current ? 'cur' : ''}" draggable="true" data-id="${k.id}">
-      <header><span class="ico">${k.type === 'folder' ? ICON.folder : ICON.doc}</span><button class="c-title" data-open="${k.id}">${esc(k.title) || 'Untitled'}</button></header>
+      <header>${k.portrait ? `<img class="c-av" src="${k.portrait.src}" alt="">` : `<span class="ico">${k.type === 'folder' ? ICON.folder : ICON.doc}</span>`}<button class="c-title" data-open="${k.id}">${esc(k.title) || 'Untitled'}</button></header>
       <textarea class="c-syn" data-id="${k.id}" placeholder="Write a synopsis…" aria-label="Synopsis">${esc(k.synopsis)}</textarea>
       <footer><span>${esc(k.status) || (k.type === 'folder' ? k.children.length + ' inside' : '')}</span><span>${fmtN(itemWords(k))} words</span></footer></article>`;
   main.innerHTML = `<div class="cork-scroll" id="corkWrap">
@@ -958,7 +964,11 @@ function renderInspector() {
     extra = `<label class="lbl">Inside</label><div class="stat-grid"><div class="stat"><b>${fmtN(all.length)}</b><span>pages</span></div><div class="stat"><b>${fmtN(itemWords(it))}</b><span>words</span></div>
       <div class="stat"><b>${all.filter(d => d.status === 'Final').length}</b><span>marked Final</span></div><div class="stat"><b>${Math.round(itemWords(it) / 250) || 0}</b><span>pages printed (approx.)</span></div></div>`;
   }
+  const picture = !isDoc ? '' : it.portrait
+    ? `<label class="lbl">Picture</label><button class="pt-thumb" data-paint="${it.id}" title="Change or save the picture"><img src="${it.portrait.src}" alt="Picture of ${esc(it.title)}"></button>`
+    : `<label class="lbl">Picture</label><button class="ghost pt-add" data-paint="${it.id}">🖼 Paint a picture from the description</button>`;
   b.innerHTML = `<div class="insp">
+    ${picture}
     <label class="lbl">Index card</label>
     <div class="card-mini lbl-${it.label || 'none'}"><textarea id="iSyn" rows="4" placeholder="A short summary for the corkboard…" aria-label="Synopsis">${esc(it.synopsis)}</textarea></div>
     <div class="two"><div><label class="lbl">Status</label><select id="iStatus">${STATUSES.map(s => `<option value="${s}" ${it.status === s ? 'selected' : ''}>${s || '—'}</option>`).join('')}</select></div>
@@ -1583,6 +1593,7 @@ function bindGlobal() {
       while ((m = re.exec(masked))) { out += d.content.slice(last, m.index) + (m[0] === it.title ? `[[${it.title}]]` : `[[${it.title}|${m[0]}]]`); last = m.index + m[0].length; n++; }
       d.content = out + d.content.slice(last); d.modified = Date.now(); save(); renderInspector(); toast(`✦ Linked ${n} mention${n > 1 ? 's' : ''} in “${d.title}”`); return;
     }
+    const pt = e.target.closest('[data-paint]'); if (pt) { document.body.classList.remove('show-side'); return Portraits.open(pt.dataset.paint); }
     const sw = e.target.closest('[data-label]'); if (sw) { const it = I(P().current); it.label = sw.dataset.label; save(); renderInspector(); renderBinder(); return; }
     if (e.target.id === 'iSnap') return takeSnapshot(I(P().current));
     const it = I(P().current);
