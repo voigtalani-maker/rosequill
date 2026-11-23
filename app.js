@@ -428,9 +428,40 @@ Everything saves automatically. Tap **☁** to turn on backups (including a Word
   if (typeof Backup !== 'undefined') Backup.init();
   if (typeof Timer !== 'undefined') Timer.init();
   if (typeof Tour !== 'undefined') Tour.init(); // first launch on this device: show the guided tour
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => { });
+  setupUpdates();
 })();
 
+/* ---------- staying up to date ----------
+   A window left open for days keeps running the code it loaded. So: ask for a new version whenever
+   Rosequill comes back to the front and every 30 minutes; when one has arrived, show a small
+   "Update" note, and switch over by itself while the window is in the background and all is saved. */
+const APP_VERSION = '2026-11-23';
+let updateReady = false;
+function setupUpdates() {
+  if (!('serviceWorker' in navigator) || !(location.protocol === 'https:' || location.hostname === 'localhost')) return;
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; } // the very first install is not an update
+    updateReady = true; showUpdateNote();
+  });
+  navigator.serviceWorker.register('sw.js').then(reg => {
+    const check = () => reg.update().catch(() => { });
+    setInterval(check, 30 * 60000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+  }).catch(() => { });
+}
+function showUpdateNote() {
+  if ($('#updNote')) return;
+  const n = document.createElement('div'); n.id = 'updNote'; n.className = 'upd-note'; n.setAttribute('role', 'status');
+  n.innerHTML = '✦ A new version of Rosequill is ready <button class="primary" id="updGo">Update</button><button class="upd-x" aria-label="Later">✕</button>';
+  document.body.appendChild(n);
+  $('#updGo').onclick = async () => { $('#updGo').disabled = true; await flush(); location.reload(); };
+  n.querySelector('.upd-x').onclick = () => n.remove();
+}
+function updateWhenIdle() { // the window just went into the background: switch over quietly if nothing is unsaved
+  if (!updateReady || dirty || flushing || saveT) return;
+  flush().then(() => { if (!dirty) location.reload(); });
+}
 // Start-up could not read the library. Nothing is written; the writer can retry or save what is there.
 function bootFailed(msg, raw) {
   $('#main').innerHTML = `<div class="empty-main" style="max-width:520px;margin:0 auto">
@@ -1597,6 +1628,6 @@ function bindGlobal() {
     if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); flush().then(() => { if (!saveFailed) toast('Saved ✦ (Rosequill also saves as you type)'); }); }
     if (mod && e.shiftKey && e.key.toLowerCase() === 'o' && document.activeElement !== $('#ed')) { e.preventDefault(); oracleFromEditor(); }
   });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) emergencySave(); else onVisible(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { emergencySave(); updateWhenIdle(); } else onVisible(); });
   window.addEventListener('pagehide', emergencySave);
 }

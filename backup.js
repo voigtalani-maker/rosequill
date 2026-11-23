@@ -367,6 +367,7 @@ const Backup = (() => {
       <section class="bk-sec"><h4>✦ On this device</h4><p>Saved automatically in this browser. ${dev}</p><div class="bk-act"><button class="ghost" data-bk="word">⇩ Word copy of “${esc(P().name)}”</button></div></section>
       <section class="bk-sec"><h4>❧ In your files</h4>${files}</section>
       <section class="bk-sec"><h4>☁ Cloud backup</h4>${cloud}</section>
+      <p class="bk-ver-line">Rosequill version ${typeof APP_VERSION !== "undefined" ? APP_VERSION : "?"}</p>
       <div class="m-act"><button class="ghost" data-x>Close</button></div>`;
     if ($('#bkUser')) { $('#bkUser').value = uval; $('#bkPass').value = pval; if (focused && $('#' + focused)) $('#' + focused).focus(); }
   }
