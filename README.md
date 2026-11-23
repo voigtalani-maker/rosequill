@@ -1,6 +1,6 @@
 # Rosequill
 
-A pink fantasy writing studio that works in the browser and installs as an app.
+A fantasy writing studio in a misty-forest palette (purple, periwinkle, aqua, cream, dusty rose and pink) that works in the browser and installs as an app.
 
 - **Writing studio:** a binder, corkboard, outline, snapshots, word goals, focus mode, and compile to Word, PDF, HTML, Markdown or plain text.
 - **Linked notes:** `[[wikilinks]]` with suggestions, backlinks, unlinked mentions, `#tags`, a constellation graph, and a quick switcher (Ctrl+K).

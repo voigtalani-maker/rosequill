@@ -6,6 +6,8 @@
 const Maps = (() => {
   const W = 1600, H = 1000, GW = 200, GH = 125, CELL = W / GW, RW = 800, RH = 500;
   const STYLES = {
+    // The app's own palette: purple, periwinkle, aqua, cream, dusty rose and pink.
+    forest: { name: 'Misty Forest', ink: '#4a3d8a', deep: [128, 146, 214], shallow: [182, 227, 234], sand: [250, 236, 216], grass: [246, 228, 222], forest: [206, 194, 238], hill: [234, 206, 208], mount: [190, 178, 228], snow: [255, 251, 246], tree: '#7a6bc0', shadow: [96, 80, 160], light: [255, 250, 240], shadeK: 0.8, river: '#5fa9c8', road: '#b5707a', border: '#e35f9f', label: '#3a2f70', frame: '#7a6bc0', card: 'rgba(255,251,245,.92)' },
     parchment: { name: 'Parchment', ink: '#4a3424', deep: [138, 172, 180], shallow: [182, 207, 205], sand: [232, 219, 176], grass: [214, 212, 160], forest: [168, 182, 122], hill: [210, 192, 150], mount: [192, 172, 136], snow: [247, 243, 232], tree: '#7d8f56', shadow: [110, 86, 60], light: [255, 250, 235], shadeK: 1, river: '#4f7f92', road: '#7a5634', border: '#9b3d6e', label: '#3a2716', frame: '#4a3424', card: 'rgba(244,234,208,.92)' },
     rose: { name: 'Rose', ink: '#7a1f4f', deep: [192, 120, 164], shallow: [226, 168, 198], sand: [255, 243, 238], grass: [252, 233, 239], forest: [236, 192, 212], hill: [242, 208, 220], mount: [230, 186, 206], snow: [255, 250, 252], tree: '#a8457a', shadow: [168, 74, 122], light: [255, 246, 250], shadeK: 0.8, river: '#c0508a', road: '#8f4a6c', border: '#7a1f4f', label: '#5e1238', frame: '#a8235f', card: 'rgba(255,244,249,.92)' },
     night: { name: 'Night', ink: '#f3c1dd', deep: [20, 16, 38], shallow: [38, 30, 62], sand: [84, 68, 96], grass: [64, 52, 84], forest: [50, 44, 74], hill: [80, 66, 98], mount: [100, 86, 120], snow: [205, 196, 225], tree: '#a58fd0', shadow: [8, 6, 18], light: [150, 140, 190], shadeK: 0.9, river: '#8fb6ff', road: '#e3bd77', border: '#ff8fc0', label: '#fbe7f2', frame: '#e3bd77', card: 'rgba(36,26,52,.9)' },
@@ -138,7 +140,7 @@ const Maps = (() => {
     const h = makeHeights(o.seed, o.shape), r = rng(o.seed + 5), feats = [];
     if (o.rivers) feats.push(...makeRivers(h, 0.5, r, { continent: 7, islands: 4, island: 4, inland: 7 }[o.shape] || 5));
     if (o.places) feats.push(...makePlaces(h, 0.5, feats.filter(f => f.kind === 'river'), r, o.shape));
-    return { id: uid(), name: o.name || 'New map', seed: o.seed, shape: o.shape, sea: 0.5, style: o.style || 'parchment', heights: enc(h), features: feats, show: { symbols: true, grid: false, compass: true, frame: true, title: true }, created: Date.now(), modified: Date.now() };
+    return { id: uid(), name: o.name || 'New map', seed: o.seed, shape: o.shape, sea: 0.5, style: o.style || 'forest', heights: enc(h), features: feats, show: { symbols: true, grid: false, compass: true, frame: true, title: true }, created: Date.now(), modified: Date.now() };
   }
 
   /* ---------- terrain rendering (cached per map) ---------- */
@@ -591,7 +593,7 @@ const Maps = (() => {
 
   /* ---- new map window with a live preview ---- */
   function newMapModal() {
-    const o = { name: '', shape: 'continent', style: 'parchment', seed: Math.floor(Math.random() * 1e9), rivers: true, places: true };
+    const o = { name: '', shape: 'continent', style: 'forest', seed: Math.floor(Math.random() * 1e9), rivers: true, places: true };
     openModal(`<h3>Create a map</h3>
       <div class="nm-grid"><div>
         <label class="f" for="nmName">Name</label><input class="m-field" id="nmName" placeholder="The Realm of…" autocomplete="off">

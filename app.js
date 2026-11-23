@@ -1472,7 +1472,7 @@ function doCompile(fmt, o) {
 function applyTheme() {
   if (S.theme === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = S.theme;
   const dark = S.theme === 'dark' || (S.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
-  $('meta[name=theme-color]').content = dark ? '#251229' : '#d63a83';
+  $('meta[name=theme-color]').content = dark ? '#252043' : '#7a6bc0';
 }
 function setFocus(on) {
   document.body.classList.toggle('focus', on); updateGoals();
